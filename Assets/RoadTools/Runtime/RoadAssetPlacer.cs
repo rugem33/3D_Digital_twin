@@ -154,7 +154,61 @@ namespace Rugem.RoadTools
             UnityEngine.Debug.Log($"[RoadTools] NavMesh 경로 기반 {successCount}개 나무 배치 완료");
         }
 
-        public void ClearAllTrees()
+        /// <summary>
+        /// 단일 위경도 좌표에 에셋을 하나 배치합니다.
+        /// NavMesh 없이 Raycast로 지면을 감지하여 배치하므로
+        /// 버스정류장·가로등 등 개별 점 데이터에 사용하세요.
+        /// </summary>
+        /// <param name="latitude">위도</param>
+        /// <param name="longitude">경도</param>
+        /// <param name="parentName">부모 오브젝트 이름 (null이면 이 컴포넌트의 transform에 직접 배치)</param>
+        /// <returns>배치에 성공하면 true</returns>
+        public bool PlacePointAsset(double latitude, double longitude, Transform parent = null)
+        {
+            if (assetPrefab == null) return false;
+
+            if (_georeference == null) _georeference = GetComponentInParent<CesiumGeoreference>();
+            if (_georeference == null) _georeference = Object.FindAnyObjectByType<CesiumGeoreference>();
+
+            if (_georeference == null)
+            {
+                UnityEngine.Debug.LogError("[RoadTools] 씬에서 CesiumGeoreference를 찾을 수 없습니다.");
+                return false;
+            }
+
+            // 1. WGS84 → ECEF → Unity 월드 좌표
+            double3 ecef = CesiumWgs84Ellipsoid.LongitudeLatitudeHeightToEarthCenteredEarthFixed(
+                new double3(longitude, latitude, 500.0));
+            Vector3 rawPos = (Vector3)(float3)_georeference.TransformEarthCenteredEarthFixedPositionToUnity(ecef);
+
+            // 2. Raycast로 실제 지면 높이 감지
+            Vector3 rayOrigin = new Vector3(rawPos.x, raycastHeight, rawPos.z);
+            if (!Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, raycastHeight * 2f, roadLayerMask))
+            {
+                UnityEngine.Debug.LogWarning(
+                    $"[RoadTools] 지면 감지 실패 - 위도: {latitude:F6}, 경도: {longitude:F6}. " +
+                    "레이어 마스크 및 지형 콜라이더를 확인하세요.");
+                return false;
+            }
+
+            // 3. 에셋 배치
+            Transform attachTo = parent != null ? parent : this.transform;
+            GameObject obj = Instantiate(assetPrefab, attachTo);
+            obj.transform.position = hit.point;
+
+            var anchor = obj.AddComponent<CesiumGlobeAnchor>();
+            anchor.detectTransformChanges = false;
+
+            if (disableShadows)
+            {
+                foreach (var r in obj.GetComponentsInChildren<Renderer>())
+                    r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+
+            return true;
+        }
+
+        public void ClearAllAssets()
         {
             for (int i = transform.childCount - 1; i >= 0; i--)
             {
@@ -165,5 +219,8 @@ namespace Rugem.RoadTools
 #endif
             }
         }
+
+        /// <summary>하위 호환 — 기존 코드와 이름이 연결된 경우를 위해 유지</summary>
+        public void ClearAllTrees() => ClearAllAssets();
     }
 }
