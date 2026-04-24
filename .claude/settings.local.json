@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(unzip -l test0.apk)",
+      "Bash(grep -E \"lib/|\\\\.so$\")",
+      "Bash(python3 *)",
+      "Bash(unzip -l /c/Users/rugem/cesium2/3D_Digital_twin/Build/test0.apk)",
+      "Bash(unzip *)",
+      "Bash(where adb *)",
+      "Bash(/c/Users/rugem/AppData/Local/Android/Sdk/platform-tools/adb.exe devices *)",
+      "Bash(grep -ao '[[:print:]]\\\\{6,\\\\}' /c/Users/rugem/cesium2/3D_Digital_twin/Library/LastBuild.buildreport)",
+      "Bash(\"/c/Users/rugem/AppData/Local/Android/Sdk/platform-tools/adb.exe\" logcat *)",
+      "Bash(\"/mnt/c/Users/rugem/AppData/Local/Android/Sdk/platform-tools/adb.exe\" logcat *)",
+      "Bash(/mnt/c/Users/rugem/AppData/Local/Android/Sdk/platform-tools/adb.exe devices *)",
+      "Bash(cmd.exe /c \"where adb\")",
+      "Read(//mnt/c/Users/**)",
+      "PowerShell(Test-Path *)",
+      "PowerShell(& \"C:\\\\Users\\\\rugem\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" devices)",
+      "PowerShell(& \"C:\\\\Users\\\\rugem\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" kill-server; Start-Sleep -Seconds 2; & \"C:\\\\Users\\\\rugem\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" start-server; Start-Sleep -Seconds 2; & \"C:\\\\Users\\\\rugem\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" devices)",
+      "PowerShell(& \"C:\\\\Users\\\\rugem\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" devices -l)",
+      "PowerShell(& \"C:\\\\Users\\\\rugem\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" logcat -d -s Unity | Select-String -Pattern \"FirstPersonGPS|GPSService|AttitudeSensor|자이로|Sensor|sensor|Exception|Error\" | Select-Object -Last 60)",
+      "PowerShell(& \"C:\\\\Users\\\\rugem\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" logcat -d -s Unity | Select-String -Pattern \"FirstPersonGPS|GPSService|AttitudeSensor|CesiumCamera|자이로|활성화|비활성화\" | Select-Object -First 30)",
+      "Bash(where pandoc *)"
+    ]
+  }
+}
