@@ -27,39 +27,126 @@ namespace Rugem.RoadTools
         [Tooltip("가로수가 심길 수 있는 레이어 (반드시 Road 레이어 설정 필요)")]
         public LayerMask roadLayerMask;
 
+        [Header("타입별 그룹 (자동 관리)")]
+        [SerializeField] private List<TypeGroup> _typeGroups = new List<TypeGroup>();
+
         private CesiumGeoreference _georeference;
 
+        [System.Serializable]
+        private class TypeGroup
+        {
+            public string name;
+            public GameObject parent;
+        }
+
+        // ── 타입 그룹 관리 ──────────────────────────────────────────────────────
+
+        public GameObject GetOrCreateTypeGroup(string typeName)
+        {
+            var group = _typeGroups.Find(g => g.name == typeName);
+            if (group != null && group.parent != null)
+                return group.parent;
+
+            var go = new GameObject($"[Type] {typeName}");
+            go.transform.SetParent(this.transform);
+
+            if (group != null)
+            {
+                group.parent = go;
+            }
+            else
+            {
+                _typeGroups.Add(new TypeGroup { name = typeName, parent = go });
+            }
+            return go;
+        }
+
+        public void SetTypeVisible(string typeName, bool visible)
+        {
+            var group = _typeGroups.Find(g => g.name == typeName);
+            if (group != null && group.parent != null)
+                group.parent.SetActive(visible);
+        }
+
+        public bool GetTypeVisible(string typeName)
+        {
+            var group = _typeGroups.Find(g => g.name == typeName);
+            if (group != null && group.parent != null)
+                return group.parent.activeSelf;
+            return true;
+        }
+
+        public List<string> GetAllTypeNames()
+        {
+            var names = new List<string>();
+            foreach (var g in _typeGroups)
+                if (g.parent != null) names.Add(g.name);
+            return names;
+        }
+
         /// <summary>
-        /// 씬의 NavMesh를 동적으로 빌드합니다. (Cesium 지형 로드 후 호출 권장)
+        /// container 하위의 모든 오브젝트에서 MeshRenderer+MeshFilter를 별도 오브젝트로 분리합니다.
         /// </summary>
+        public int DetachMeshes(Transform container, System.Action<GameObject> onCreated = null)
+        {
+            int count = 0;
+            var renderers = new List<MeshRenderer>();
+            CollectRenderers(container, renderers);
+
+            foreach (var mr in renderers)
+            {
+                var mf = mr.GetComponent<MeshFilter>();
+                if (mf == null || mf.sharedMesh == null) continue;
+
+                var meshGo = new GameObject($"[Mesh] {mr.gameObject.name}");
+                meshGo.transform.SetParent(container);
+                meshGo.transform.position = mr.transform.position;
+                meshGo.transform.rotation = mr.transform.rotation;
+                meshGo.transform.localScale = mr.transform.lossyScale;
+
+                var newMf = meshGo.AddComponent<MeshFilter>();
+                newMf.sharedMesh = mf.sharedMesh;
+
+                var newMr = meshGo.AddComponent<MeshRenderer>();
+                newMr.sharedMaterials = mr.sharedMaterials;
+                newMr.shadowCastingMode = mr.shadowCastingMode;
+
+                onCreated?.Invoke(meshGo);
+                count++;
+            }
+            return count;
+        }
+
+        private void CollectRenderers(Transform t, List<MeshRenderer> result)
+        {
+            var mr = t.GetComponent<MeshRenderer>();
+            if (mr != null) result.Add(mr);
+            foreach (Transform child in t)
+                CollectRenderers(child, result);
+        }
+
+        // ── NavMesh 빌드 ────────────────────────────────────────────────────────
+
         public void BuildNavMesh()
         {
             var navMeshSurface = GetComponent<NavMeshSurface>();
             if (navMeshSurface == null)
-            {
                 navMeshSurface = gameObject.AddComponent<NavMeshSurface>();
-            }
-            
+
             navMeshSurface.collectObjects = CollectObjects.Children;
             navMeshSurface.layerMask = roadLayerMask;
             navMeshSurface.BuildNavMesh();
-            
+
             UnityEngine.Debug.Log("[RoadTools] NavMesh 빌드 완료");
         }
 
-        public void PlaceTreeLine(double startLat, double startLon, double endLat, double endLon, int unusedCount)
+        // ── 선(Line) 데이터 배치 ────────────────────────────────────────────────
+
+        public void PlaceTreeLine(double startLat, double startLon, double endLat, double endLon, int unusedCount, string typeName = "가로수")
         {
             if (assetPrefab == null) return;
 
-            if (_georeference == null) _georeference = GetComponentInParent<CesiumGeoreference>();
-            if (_georeference == null) _georeference = Object.FindAnyObjectByType<CesiumGeoreference>();
-
-            if (_georeference == null)
-            {
-                UnityEngine.Debug.LogError("[RoadTools] 씬에서 CesiumGeoreference를 찾을 수 없습니다.");
-                return;
-            }
-
+            if (!EnsureGeoreference()) return;
 
             // 1. 위경도 -> Unity World 좌표 변환
             double3 startEcef = CesiumWgs84Ellipsoid.LongitudeLatitudeHeightToEarthCenteredEarthFixed(new double3(startLon, startLat, 500.0));
@@ -74,7 +161,6 @@ namespace Rugem.RoadTools
             Vector3 worldEnd = Vector3.zero;
 
             // 4. NavMesh 바닥 찾기 (SamplePosition)
-            // 씬에 구워진 파란색 NavMesh 바닥 중 가장 가까운 점을 찾습니다.
             NavMeshHit hitStart, hitEnd;
             if (NavMesh.SamplePosition(rawStart, out hitStart, 1000f, NavMesh.AllAreas) &&
                 NavMesh.SamplePosition(rawEnd, out hitEnd, 1000f, NavMesh.AllAreas))
@@ -87,7 +173,6 @@ namespace Rugem.RoadTools
                 UnityEngine.Debug.LogWarning($"[RoadTools] NavMesh 바닥을 찾지 못했습니다. Bake 여부와 레이어를 확인하세요.");
                 return;
             }
-            // --- [수정 끝] ---
 
             // 5. 이제 보정된 worldStart, worldEnd로 경로 계산
             NavMeshPath path = new NavMeshPath();
@@ -99,8 +184,9 @@ namespace Rugem.RoadTools
 
             if (path.corners.Length < 2) return;
 
+            GameObject typeGroupParent = GetOrCreateTypeGroup(typeName);
             GameObject lineParent = new GameObject($"Line_{startLat:F4}_{startLon:F4}");
-            lineParent.transform.SetParent(this.transform);
+            lineParent.transform.SetParent(typeGroupParent.transform);
 
             int successCount = 0;
 
@@ -124,7 +210,7 @@ namespace Rugem.RoadTools
                         GameObject tree = Instantiate(assetPrefab, lineParent.transform);
                         tree.name = $"Tree_{successCount}";
                         tree.transform.position = hit.point;
-                        
+
                         // 나무는 수직을 유지하면서 도로 진행 방향을 바라봄
                         if (segmentDir != Vector3.zero)
                             tree.transform.rotation = Quaternion.LookRotation(segmentDir, Vector3.up);
@@ -140,7 +226,7 @@ namespace Rugem.RoadTools
                         }
                         successCount++;
                     }
-                    
+
                     currentDist += treeInterval;
                     if (treeInterval <= 0) break; // 무한 루프 방지
                 }
@@ -154,27 +240,18 @@ namespace Rugem.RoadTools
             UnityEngine.Debug.Log($"[RoadTools] NavMesh 경로 기반 {successCount}개 나무 배치 완료");
         }
 
+        // ── 점(Point) 데이터 배치 ───────────────────────────────────────────────
+
         /// <summary>
         /// 단일 위경도 좌표에 에셋을 하나 배치합니다.
         /// NavMesh 없이 Raycast로 지면을 감지하여 배치하므로
         /// 버스정류장·가로등 등 개별 점 데이터에 사용하세요.
         /// </summary>
-        /// <param name="latitude">위도</param>
-        /// <param name="longitude">경도</param>
-        /// <param name="parentName">부모 오브젝트 이름 (null이면 이 컴포넌트의 transform에 직접 배치)</param>
-        /// <returns>배치에 성공하면 true</returns>
         public bool PlacePointAsset(double latitude, double longitude, Transform parent = null)
         {
             if (assetPrefab == null) return false;
 
-            if (_georeference == null) _georeference = GetComponentInParent<CesiumGeoreference>();
-            if (_georeference == null) _georeference = Object.FindAnyObjectByType<CesiumGeoreference>();
-
-            if (_georeference == null)
-            {
-                UnityEngine.Debug.LogError("[RoadTools] 씬에서 CesiumGeoreference를 찾을 수 없습니다.");
-                return false;
-            }
+            if (!EnsureGeoreference()) return false;
 
             // 1. WGS84 → ECEF → Unity 월드 좌표
             double3 ecef = CesiumWgs84Ellipsoid.LongitudeLatitudeHeightToEarthCenteredEarthFixed(
@@ -208,6 +285,8 @@ namespace Rugem.RoadTools
             return true;
         }
 
+        // ── 정리 ────────────────────────────────────────────────────────────────
+
         public void ClearAllAssets()
         {
             for (int i = transform.childCount - 1; i >= 0; i--)
@@ -218,9 +297,25 @@ namespace Rugem.RoadTools
                 Destroy(transform.GetChild(i).gameObject);
 #endif
             }
+            _typeGroups.Clear();
         }
 
         /// <summary>하위 호환 — 기존 코드와 이름이 연결된 경우를 위해 유지</summary>
         public void ClearAllTrees() => ClearAllAssets();
+
+        // ── 내부 헬퍼 ───────────────────────────────────────────────────────────
+
+        private bool EnsureGeoreference()
+        {
+            if (_georeference != null) return true;
+            _georeference = GetComponentInParent<CesiumGeoreference>();
+            if (_georeference == null) _georeference = Object.FindAnyObjectByType<CesiumGeoreference>();
+            if (_georeference == null)
+            {
+                UnityEngine.Debug.LogError("[RoadTools] 씬에서 CesiumGeoreference를 찾을 수 없습니다.");
+                return false;
+            }
+            return true;
+        }
     }
 }

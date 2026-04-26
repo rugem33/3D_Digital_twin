@@ -5,7 +5,7 @@ using UnityEditor.Callbacks;
 using UnityEditor.iOS.Xcode;
 using System.IO;
 
-namespace Rugem.RoadTools.Editor
+namespace Rugem.RoadTools.EditorTools
 {
     /// <summary>
     /// US-03 iOS 지원: 빌드 후 Xcode 프로젝트의 Info.plist에
