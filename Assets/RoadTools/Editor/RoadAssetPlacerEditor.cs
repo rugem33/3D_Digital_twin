@@ -7,17 +7,23 @@ using Rugem.RoadTools;
 namespace Rugem.RoadTools.EditorTools
 {
     [CustomEditor(typeof(RoadAssetPlacer))]
-    public class RoadAssetPlacerEditor : Editor
+    public class RoadAssetPlacerEditor : UnityEditor.Editor
     {
-        // ── 점 데이터 CSV 설정 (에디터 세션 내 유지) ──────────────────────────
+        // ── 점 데이터 CSV 설정 ─────────────────────────────────────────────────
         private bool   _pointFoldout   = true;
-        private int    _latColumn      = 1;   // 0-based 열 인덱스
+        private int    _latColumn      = 1;
         private int    _lonColumn      = 2;
         private bool   _hasHeader      = true;
         private string _groupName      = "PointAssets";
+        private string _pointTypeName  = "시설물";
 
         // ── 선 데이터 CSV 설정 ─────────────────────────────────────────────────
-        private bool _lineFoldout = true;
+        private bool   _lineFoldout    = true;
+        private string _lineTypeName   = "가로수";
+
+        // ── US-08 가시성 / 메쉬 분리 ──────────────────────────────────────────
+        private bool _visibilityFoldout = true;
+        private bool _meshDetachFoldout = false;
 
         public override void OnInspectorGUI()
         {
@@ -41,9 +47,11 @@ namespace Rugem.RoadTools.EditorTools
                     "CSV 형식: id, 시작위도, 시작경도, 종료위도, 종료경도, (기타), 갯수",
                     MessageType.Info);
 
+                _lineTypeName = EditorGUILayout.TextField("타입 이름", _lineTypeName);
+
                 GUI.color = Color.cyan;
                 if (GUILayout.Button("CSV 선 데이터 로드 및 배치", GUILayout.Height(32)))
-                    ProcessLineCSV(script);
+                    ProcessLineCSV(script, _lineTypeName);
                 GUI.color = Color.white;
                 EditorGUI.indentLevel--;
             }
@@ -60,15 +68,65 @@ namespace Rugem.RoadTools.EditorTools
                     "위경도 한 쌍만 있는 CSV에 사용합니다.\n열 인덱스는 0부터 시작합니다.",
                     MessageType.Info);
 
-                _hasHeader  = EditorGUILayout.Toggle("헤더 행 건너뜀", _hasHeader);
-                _latColumn  = EditorGUILayout.IntField("위도(lat) 열 인덱스", _latColumn);
-                _lonColumn  = EditorGUILayout.IntField("경도(lon) 열 인덱스", _lonColumn);
-                _groupName  = EditorGUILayout.TextField("그룹 오브젝트 이름", _groupName);
+                _hasHeader     = EditorGUILayout.Toggle("헤더 행 건너뜀", _hasHeader);
+                _latColumn     = EditorGUILayout.IntField("위도(lat) 열 인덱스", _latColumn);
+                _lonColumn     = EditorGUILayout.IntField("경도(lon) 열 인덱스", _lonColumn);
+                _groupName     = EditorGUILayout.TextField("그룹 오브젝트 이름", _groupName);
+                _pointTypeName = EditorGUILayout.TextField("타입 이름", _pointTypeName);
 
                 GUILayout.Space(4);
                 GUI.color = new Color(0.5f, 1f, 0.8f);
                 if (GUILayout.Button("CSV 점 데이터 로드 및 배치", GUILayout.Height(32)))
-                    ProcessPointCSV(script);
+                    ProcessPointCSV(script, _pointTypeName);
+                GUI.color = Color.white;
+                EditorGUI.indentLevel--;
+            }
+            EditorGUILayout.EndFoldoutHeaderGroup();
+
+            GUILayout.Space(8);
+
+            // ── 타입별 가시성 제어 ───────────────────────────────────────────
+            _visibilityFoldout = EditorGUILayout.BeginFoldoutHeaderGroup(_visibilityFoldout, "타입별 가시성 제어");
+            if (_visibilityFoldout)
+            {
+                EditorGUI.indentLevel++;
+                var typeNames = script.GetAllTypeNames();
+                if (typeNames.Count == 0)
+                {
+                    EditorGUILayout.HelpBox("배치된 타입이 없습니다.", MessageType.None);
+                }
+                else
+                {
+                    foreach (var typeName in typeNames)
+                    {
+                        bool current = script.GetTypeVisible(typeName);
+                        bool next    = EditorGUILayout.Toggle(typeName, current);
+                        if (next != current)
+                        {
+                            Undo.RegisterFullObjectHierarchyUndo(script.gameObject, $"Toggle Visibility: {typeName}");
+                            script.SetTypeVisible(typeName, next);
+                        }
+                    }
+                }
+                EditorGUI.indentLevel--;
+            }
+            EditorGUILayout.EndFoldoutHeaderGroup();
+
+            GUILayout.Space(6);
+
+            // ── 메쉬 분리 ────────────────────────────────────────────────────
+            _meshDetachFoldout = EditorGUILayout.BeginFoldoutHeaderGroup(_meshDetachFoldout, "메쉬 분리 (Mesh Detach)");
+            if (_meshDetachFoldout)
+            {
+                EditorGUI.indentLevel++;
+                EditorGUILayout.HelpBox(
+                    "배치된 프리팹에서 MeshRenderer를 별도의 순수 메쉬 오브젝트로 추출합니다.\n" +
+                    "추출된 메쉬는 [MeshContainer] 하위에 생성됩니다.",
+                    MessageType.Info);
+
+                GUI.color = new Color(1f, 0.85f, 0.4f);
+                if (GUILayout.Button("메쉬 분리 실행", GUILayout.Height(30)))
+                    DetachMeshesWithUndo(script);
                 GUI.color = Color.white;
                 EditorGUI.indentLevel--;
             }
@@ -91,13 +149,13 @@ namespace Rugem.RoadTools.EditorTools
 
         // ── 선 데이터 CSV 처리 ─────────────────────────────────────────────────
 
-        private void ProcessLineCSV(RoadAssetPlacer script)
+        private void ProcessLineCSV(RoadAssetPlacer script, string typeName)
         {
             string path = EditorUtility.OpenFilePanel("선 데이터 CSV 파일 선택", "", "csv");
             if (string.IsNullOrEmpty(path)) return;
 
             string[] lines = File.ReadAllLines(path);
-            int totalLines = lines.Length - 1;
+            int totalLines  = lines.Length - 1;
             int successCount = 0;
 
             Undo.RegisterFullObjectHierarchyUndo(script.gameObject, "Place Line Assets from CSV");
@@ -133,7 +191,7 @@ namespace Rugem.RoadTools.EditorTools
                         double eLon      = double.Parse(data[4].Trim());
                         int    treeCount = int.Parse(data[6].Trim());
 
-                        script.PlaceTreeLine(sLat, sLon, eLat, eLon, treeCount);
+                        script.PlaceTreeLine(sLat, sLon, eLat, eLon, treeCount, typeName);
                         successCount++;
                     }
                     catch (System.Exception ex)
@@ -152,12 +210,11 @@ namespace Rugem.RoadTools.EditorTools
 
         // ── 점 데이터 CSV 처리 ─────────────────────────────────────────────────
 
-        private void ProcessPointCSV(RoadAssetPlacer script)
+        private void ProcessPointCSV(RoadAssetPlacer script, string typeName)
         {
             string path = EditorUtility.OpenFilePanel("점 데이터 CSV 파일 선택", "", "csv");
             if (string.IsNullOrEmpty(path)) return;
 
-            // 열 인덱스 유효성 검사
             int minColumns = Mathf.Max(_latColumn, _lonColumn) + 1;
 
             string[] lines = File.ReadAllLines(path);
@@ -166,9 +223,10 @@ namespace Rugem.RoadTools.EditorTools
             int successCount = 0;
             int failCount    = 0;
 
-            // 모든 점을 하나의 그룹 오브젝트 아래 배치
+            // 타입 그룹 하위에 그룹 오브젝트 배치
+            GameObject typeGroupParent = script.GetOrCreateTypeGroup(typeName);
             GameObject groupObj = new GameObject(string.IsNullOrWhiteSpace(_groupName) ? "PointAssets" : _groupName);
-            groupObj.transform.SetParent(script.transform);
+            groupObj.transform.SetParent(typeGroupParent.transform);
             Undo.RegisterCreatedObjectUndo(groupObj, "Place Point Assets from CSV");
 
             try
@@ -222,11 +280,8 @@ namespace Rugem.RoadTools.EditorTools
                 EditorUtility.ClearProgressBar();
             }
 
-            // 아무것도 배치되지 않으면 빈 그룹 오브젝트 제거
             if (successCount == 0)
-            {
                 Undo.DestroyObjectImmediate(groupObj);
-            }
 
             string message = $"배치 성공: {successCount}개";
             if (failCount > 0) message += $"\n지면 미감지 / 파싱 실패: {failCount}개";
@@ -235,10 +290,22 @@ namespace Rugem.RoadTools.EditorTools
             Debug.Log($"[RoadTools] 점 데이터 배치 — 성공: {successCount}, 실패: {failCount}");
         }
 
-        /// <summary>
-        /// 쉼표 구분 CSV 한 줄을 파싱합니다.
-        /// 따옴표로 감싼 필드(쉼표 포함 가능)를 올바르게 처리합니다.
-        /// </summary>
+        // ── 메쉬 분리 ──────────────────────────────────────────────────────────
+
+        private void DetachMeshesWithUndo(RoadAssetPlacer script)
+        {
+            var containerGo = new GameObject("[MeshContainer]");
+            containerGo.transform.SetParent(script.transform);
+            Undo.RegisterCreatedObjectUndo(containerGo, "Detach Meshes");
+
+            int count = script.DetachMeshes(containerGo.transform,
+                go => Undo.RegisterCreatedObjectUndo(go, "Detach Meshes"));
+
+            EditorUtility.DisplayDialog("메쉬 분리 완료", $"{count}개의 메쉬를 분리했습니다.", "확인");
+        }
+
+        // ── CSV 파싱 헬퍼 ──────────────────────────────────────────────────────
+
         private static string[] SplitCSVLine(string line)
         {
             var fields = new List<string>();
