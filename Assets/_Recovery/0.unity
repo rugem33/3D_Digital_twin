@@ -198,7 +198,7 @@ MonoBehaviour:
   _groundSearchRange: 20
   _terrainLayerMask:
     serializedVersion: 2
-    m_Bits: 128
+    m_Bits: 4294967295
   _maxSubdivisionsPerSegment: 60
   _markerColor: {r: 1, g: 0.35, b: 0, a: 1}
   _markerRadius: 4
@@ -331,7 +331,6 @@ MonoBehaviour:
   _gpsService: {fileID: 1730439404}
   _kakaoSearch: {fileID: 780111565}
   _minimapController: {fileID: 1730439405}
-  _navAnchor: {fileID: 1391894561}
   _searchPanelHeightRatio: 0.65
   _arrivedDisplayDuration: 3.5
 --- !u!114 &780111564
@@ -348,18 +347,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: Rugem.RoadTools.Runtime::Rugem.RoadTools.NavigationService
   _gpsService: {fileID: 1730439404}
   _playerController: {fileID: 1391894556}
-  _navAnchor: {fileID: 1391894561}
   _arrivalRadius: 15
   _navMeshSampleRadius: 50
   _routeRefreshInterval: 10
-  _roadLayerMask:
-    serializedVersion: 2
-    m_Bits: 64
-  _roadGridStep: 8
-  _roadSearchPadding: 40
-  _roadRaycastHeight: 500
-  _maxRoadGridCells: 30000
-  _directionsService: {fileID: 0}
   _poiList: []
 --- !u!114 &780111565
 MonoBehaviour:
@@ -388,7 +378,7 @@ GameObject:
   m_Component:
   - component: {fileID: 794483542}
   - component: {fileID: 794483543}
-  m_Layer: 8
+  m_Layer: 0
   m_Name: output_folder
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -621,9 +611,6 @@ GameObject:
   - component: {fileID: 1391894559}
   - component: {fileID: 1391894558}
   - component: {fileID: 1391894557}
-  - component: {fileID: 1391894560}
-  - component: {fileID: 1391894561}
-  - component: {fileID: 1391894563}
   m_Layer: 0
   m_Name: Main Camera
   m_TagString: MainCamera
@@ -672,7 +659,7 @@ Camera:
     height: 1
   near clip plane: 0.3
   far clip plane: 300000
-  field of view: 110.1
+  field of view: 60
   orthographic: 0
   orthographic size: 5
   m_Depth: -1
@@ -720,21 +707,21 @@ MonoBehaviour:
   _gpsService: {fileID: 1730439404}
   _permissionHandler: {fileID: 1730439403}
   _worldTerrain: {fileID: 2007145449}
-  _eyeHeight: 5
+  _eyeHeight: 10
   _raycastOriginHeight: 20
   _groundLayerMask:
     serializedVersion: 2
-    m_Bits: 128
+    m_Bits: 4294967295
   _positionLerpSpeed: 8
   _rotationLerpSpeed: 10
   _forceCompassOnly: 0
   _dragSensitivity: 0.3
   _buildingLayerMask:
     serializedVersion: 2
-    m_Bits: 256
+    m_Bits: 0
   _roadLayerMask:
     serializedVersion: 2
-    m_Bits: 64
+    m_Bits: 0
   _buildingRayLength: 15
   _roadSearchMaxRadius: 30
 --- !u!114 &1391894557
@@ -877,111 +864,6 @@ MonoBehaviour:
       m_SingletonActionBindings: []
       m_Flags: 0
     m_Reference: {fileID: 0}
---- !u!114 &1391894560
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1391894552}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a114a4e1226458a47af2683b5b084ad8, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Rugem.RoadTools.Runtime::Rugem.RoadTools.CesiumCreditReducer
-  _fontSize: 0
-  _disableLinks: 1
---- !u!114 &1391894561
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1391894552}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f24ccfa80f95e424db995f4c80ad641b, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Rugem.RoadTools.Runtime::Rugem.RoadTools.CameraNavAnchor
-  _raycastOriginHeight: 500
-  _groundLayerMask:
-    serializedVersion: 2
-    m_Bits: 128
---- !u!114 &1391894563
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1391894552}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a114a4e1226458a47af2683b5b084ad8, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Rugem.RoadTools.Runtime::Rugem.RoadTools.CesiumCreditReducer
-  _fontSize: 0
-  _disableLinks: 1
---- !u!1 &1438839279
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 1438839280}
-  - component: {fileID: 1438839281}
-  m_Layer: 0
-  m_Name: building nameTag Manager
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &1438839280
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1438839279}
-  serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -165.12117, y: -120.19733, z: -1028.8253}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 1656777299}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &1438839281
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1438839279}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: ecb97138a26172845978e2b77f3fc2d8, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Rugem.RoadTools.Runtime::Rugem.RoadTools.BuildingLabelManager
-  _restApiKey: 27513dcbfcf8876df5ec36eb1b809383
-  _timeoutSeconds: 10
-  _gridSize: 7
-  _checkInterval: 2.5
-  _buildingMinHeight: 4
-  _maxRayDistance: 2000
-  _buildingLayerMask:
-    serializedVersion: 2
-    m_Bits: 256
-  _gpsQuantizeScale: 0.0001
-  _labelHeightOffset: 8
-  _labelMaxDistance: 400
-  _fontSize: 15
-  _textColor: {r: 1, g: 1, b: 1, a: 0.92}
-  _bgColor: {r: 0, g: 0, b: 0, a: 0.55}
-  _padding: {x: 7, y: 4}
-  _georeference: {fileID: 1656777298}
 --- !u!1 &1477832123 stripped
 GameObject:
   m_CorrespondingSourceObject: {fileID: 188006, guid: c6b7fb383a3534b039692b5485b6e739, type: 3}
@@ -1062,7 +944,6 @@ Transform:
   - {fileID: 1721597435}
   - {fileID: 794483542}
   - {fileID: 780111559}
-  - {fileID: 1438839280}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1721597434
@@ -1290,7 +1171,7 @@ GameObject:
   - component: {fileID: 2007145447}
   - component: {fileID: 2007145449}
   - component: {fileID: 2007145448}
-  m_Layer: 7
+  m_Layer: 0
   m_Name: Cesium World Terrain
   m_TagString: Untagged
   m_Icon: {fileID: 0}

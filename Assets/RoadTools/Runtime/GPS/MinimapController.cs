@@ -37,26 +37,65 @@ namespace Rugem.RoadTools
         private Texture2D _arrowTex;
         private GUIStyle _northStyle;
         private CesiumCameraManager _cameraManager;
+        private bool _registeredWithCameraManager;
+
+        // ── 오버뷰 모드 ───────────────────────────────────────────────────────
+        private bool  _overviewMode;
+        private float _savedOrthoSize;
+
+        /// <summary>오버뷰 패널에 표시할 RenderTexture</summary>
+        public RenderTexture OverviewTexture   => _rt;
+        /// <summary>현재 카메라 직교 크기 (월드 미터 단위 반경)</summary>
+        public float         CurrentOrthoSize  => _minimapCam != null ? _minimapCam.orthographicSize : _orthographicSize;
+        /// <summary>현재 카메라 월드 위치 (XZ 평면 기준으로 WorldToMapPos에서 사용)</summary>
+        public Vector3       CurrentCamPosition => _minimapCam != null ? _minimapCam.transform.position : Vector3.zero;
+
+        /// <summary>
+        /// 오버뷰 모드 진입 — 카메라를 playerWorldPos↔destWorldPos 중점으로 이동하고
+        /// 양쪽이 모두 보이도록 직교 크기를 조정합니다.
+        /// </summary>
+        public void EnterOverviewMode(Vector3 playerWorldPos, Vector3 destWorldPos)
+        {
+            if (_minimapCam == null) return;
+            if (!_overviewMode)
+                _savedOrthoSize = _minimapCam.orthographicSize;
+
+            float midX = (playerWorldPos.x + destWorldPos.x) * 0.5f;
+            float midZ = (playerWorldPos.z + destWorldPos.z) * 0.5f;
+            float dx   = Mathf.Abs(destWorldPos.x - playerWorldPos.x) * 0.5f;
+            float dz   = Mathf.Abs(destWorldPos.z - playerWorldPos.z) * 0.5f;
+            float size = Mathf.Max(dx, dz, 50f) * 1.4f; // 40% 여백
+
+            _minimapCam.transform.position = new Vector3(midX, _minimapCam.transform.position.y, midZ);
+            _minimapCam.orthographicSize   = size;
+            _overviewMode = true;
+        }
+
+        /// <summary>오버뷰 모드 종료 — 카메라 직교 크기 복원, 미니맵 일반 표시 재개</summary>
+        public void ExitOverviewMode()
+        {
+            if (_minimapCam == null || !_overviewMode) return;
+            _minimapCam.orthographicSize = _savedOrthoSize;
+            _overviewMode = false;
+        }
 
         // ── 생명주기 ──────────────────────────────────────────────────────────
 
         private void Awake()
         {
-            if (_followTarget == null)
-            {
-                var gps = FindAnyObjectByType<FirstPersonGPSController>();
-                _followTarget = gps != null ? gps.transform : transform;
-            }
+            ResolveFollowTarget();
         }
 
         private void Start()
         {
+            ResolveFollowTarget();
             CreateMinimapCamera();
             _arrowTex = CreateArrowTexture(32, _markerColor);
         }
 
         private void LateUpdate()
         {
+            if (_overviewMode) return; // 오버뷰 중에는 플레이어 추적 중지
             if (_minimapCam == null || _followTarget == null) return;
             Vector3 p = _followTarget.position;
             _minimapCam.transform.position = new Vector3(p.x, p.y + _cameraHeight, p.z);
@@ -66,7 +105,7 @@ namespace Rugem.RoadTools
         {
             if (_minimapCam != null)
             {
-                if (_cameraManager != null)
+                if (_cameraManager != null && _registeredWithCameraManager)
                     _cameraManager.additionalCameras.Remove(_minimapCam);
                 Destroy(_minimapCam.gameObject);
             }
@@ -74,11 +113,23 @@ namespace Rugem.RoadTools
             if (_arrowTex != null) Destroy(_arrowTex);
         }
 
+        private void ResolveFollowTarget()
+        {
+            if (_followTarget != null) return;
+
+            var gps = FindAnyObjectByType<FirstPersonGPSController>();
+            if (gps != null)
+                _followTarget = gps.transform;
+        }
+
         // ── 카메라 설정 ────────────────────────────────────────────────────────
 
         private void CreateMinimapCamera()
         {
+            if (_minimapCam != null) return;
+
             var go = new GameObject("[MinimapCamera]");
+            go.transform.SetParent(transform, false);
             go.transform.rotation = Quaternion.Euler(90f, 0f, 0f); // 정면 하방
 
             _minimapCam = go.AddComponent<Camera>();
@@ -98,11 +149,14 @@ namespace Rugem.RoadTools
             _rt.Create();
             _minimapCam.targetTexture = _rt;
 
-            // Cesium CameraManager에 등록 — 미니맵 frustum 기준으로도 타일 스트리밍
-            _cameraManager = CesiumCameraManager.GetOrCreate(gameObject);
+            // 기존 Cesium CameraManager에 등록 — 임의 오브젝트에 새 매니저를 만들면
+            // Cesium 네이티브 객체 초기화 순서와 충돌할 수 있다.
+            _cameraManager = FindAnyObjectByType<CesiumCameraManager>();
             if (_cameraManager != null)
             {
-                _cameraManager.additionalCameras.Add(_minimapCam);
+                if (!_cameraManager.additionalCameras.Contains(_minimapCam))
+                    _cameraManager.additionalCameras.Add(_minimapCam);
+                _registeredWithCameraManager = true;
                 Debug.Log("[Minimap] CesiumCameraManager에 미니맵 카메라 등록 완료");
             }
             else
@@ -115,8 +169,10 @@ namespace Rugem.RoadTools
 
         private void OnGUI()
         {
-            if (_rt == null) return;
+            if (_rt == null || _overviewMode) return; // 오버뷰 모드 중에는 소형 미니맵 숨김
 
+            Color savedColor = GUI.color;
+            Matrix4x4 savedMatrix = GUI.matrix;
             float mapSize = Screen.height * _mapSizeRatio;
             float margin  = Screen.width  * 0.03f;
             float x = Screen.width  - mapSize - margin;
@@ -138,11 +194,10 @@ namespace Rugem.RoadTools
                 float cy       = y + mapSize * 0.5f;
                 float arrowSz  = mapSize * 0.14f;
 
-                Matrix4x4 saved = GUI.matrix;
                 GUIUtility.RotateAroundPivot(yaw, new Vector2(cx, cy));
                 GUI.color = _markerColor;
                 GUI.DrawTexture(new Rect(cx - arrowSz * 0.5f, cy - arrowSz * 0.5f, arrowSz, arrowSz), _arrowTex);
-                GUI.matrix = saved;
+                GUI.matrix = savedMatrix;
             }
 
             // 북 방향 라벨
@@ -158,6 +213,8 @@ namespace Rugem.RoadTools
             }
             GUI.color = Color.white;
             GUI.Label(new Rect(x, y + 2f, mapSize, mapSize * 0.25f), "N", _northStyle);
+            GUI.matrix = savedMatrix;
+            GUI.color = savedColor;
         }
 
         // ── 텍스처 생성 ────────────────────────────────────────────────────────
