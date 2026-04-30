@@ -35,6 +35,9 @@ namespace Rugem.RoadTools
 
         // ── 공개 API ────────────────────────────────────────────────────────────
 
+        /// <summary>코드/Inspector에서 API 키를 직접 주입합니다.</summary>
+        public void Initialize(string apiKey) => _restApiKey = apiKey;
+
         /// <summary>
         /// 카카오 모빌리티 API로 도로 경로를 요청합니다.
         /// onComplete(unityWaypoints, errorMessage) — 성공 시 errorMessage == null

@@ -1320,6 +1320,233 @@ RoadAssetPlacer.BuildNavMesh()
 └─ NavMeshSurface.BuildNavMesh()
 ```
 
+---
+
+## 16. 이번 스프린트에서 추가/변경된 Inspector 및 파이프라인 상세
+
+이 섹션은 app_beta3 브랜치에서 새로 추가되거나 수정된 컴포넌트와, 실제 코드 기본값 기준 Inspector 필드를 정리합니다.
+
+### 16.1 신규/변경 컴포넌트 목록
+
+| 컴포넌트 | 상태 | 파일 |
+|---|---|---|
+| `CameraNavAnchor` | 신규 | `GPS/CameraNavAnchor.cs` |
+| `CesiumCreditReducer` | 신규 | `GPS/CesiumCreditReducer.cs` |
+| `MobileInputSetup` | 신규(재작성) | `GPS/MobileInputSetup.cs` |
+| `BuildingLabelManager` | 신규 | `GPS/BuildingLabelManager.cs` |
+| `RouteRenderer` | 수정 (`SampleTerrainDownward` 교체) | `Navigation/RouteRenderer.cs` |
+| `NavigationService` | 수정 (직선경로 fallback 추가, `_routeRequestId` 추가) | `Navigation/NavigationService.cs` |
+| `NavigationUIController` | 수정 (`_navAnchor` 연결, 드래그 스크롤) | `Navigation/NavigationUIController.cs` |
+| `FirstPersonGPSController` | 수정 (`Pointer.current` 통합 드래그) | `GPS/FirstPersonGPSController.cs` |
+
+### 16.2 신규 컴포넌트 Inspector (코드 기본값 기준)
+
+#### CameraNavAnchor
+GameObject `Main Camera`에 부착. 자식 `mainCameraNav` 오브젝트를 지형 표면 Y에 매 LateUpdate마다 배치.
+
+| 필드 | 타입 | 코드 기본값 | 설명 |
+|---|---|---|---|
+| `_raycastOriginHeight` | float | 500 m | 카메라 위 레이캐스트 시작 오프셋 |
+| `_groundLayerMask` | LayerMask | ~0 (전체) | 지면 레이어 |
+
+**공개 API:** `NavTransform` (Transform) — mainCameraNav 위치를 NavigationService·RouteRenderer에 제공.
+
+**상호작용 연결:**
+- `NavigationService._navAnchor` → `NavTransform.position`을 경로 시작점으로 사용
+- `NavigationUIController._navAnchor` → `TrimFromPlayerPosition()` 트리밍 기준
+
+---
+
+#### CesiumCreditReducer
+GameObject `Main Camera`에 부착. Cesium ion 크레딧 UI 크기 축소 및 입력 차단 해제.
+
+| 필드 | 타입 | 코드 기본값 | 설명 |
+|---|---|---|---|
+| `_fontSize` | int (0~11) | 5 | 크레딧 글자 크기. 0이면 완전 숨김 |
+| `_disableLinks` | bool | true | 하이퍼링크 터치 차단 의도 필드 |
+
+**동작:** Start 후 2프레임 대기 → Apply() → 3초마다 반복.  
+Apply() 내부:
+1. `OnScreenCredits` VisualElement 탐색
+2. 전체 rootVisualElement 트리에 `PickingMode.Ignore` 적용 → OnGUI 터치 차단 방지
+3. `_fontSize <= 0` → `DisplayStyle.None` (완전 숨김)
+
+**상호작용:** Cesium UIDocument → VisualElement pickingMode → OnGUI 입력 정상 동작 보장.
+
+---
+
+#### MobileInputSetup
+EnhancedTouchSupport 활성화 전용 컴포넌트. Inspector 필드 없음.
+
+**동작:**
+- `Awake()`: `ENABLE_INPUT_SYSTEM` 조건에서 `EnhancedTouchSupport.Enable()`
+- `OnDestroy()`: `EnhancedTouchSupport.Disable()`
+
+**상호작용:** Unity Input System 전역 → `Touch.activeTouches` API 활성화.
+
+---
+
+#### BuildingLabelManager
+GameObject `building nameTag Manager`에 부착. 카메라 뷰포트 건물 감지 → Kakao API → OnGUI 반투명 레이블.
+
+| 필드 | 타입 | 코드 기본값 | 설명 |
+|---|---|---|---|
+| `_restApiKey` | string | — | 카카오 REST API 키 (Inspector 입력 필수) |
+| `_timeoutSeconds` | int | 10 s | API HTTP 타임아웃 |
+| `_gridSize` | int (3~14) | 7 | 뷰포트 N×N 격자 레이캐스트 수 |
+| `_checkInterval` | float | 2.5 s | 스캔 반복 간격 |
+| `_buildingMinHeight` | float | 4 m | 지면 기준 이 높이 이하 → 지면/도로 무시 |
+| `_maxRayDistance` | float | 2000 m | 레이캐스트 최대 거리 |
+| `_buildingLayerMask` | LayerMask | ~0 (전체) | 건물 인식 레이어 |
+| `_gpsQuantizeScale` | float | 1e-4 | GPS 양자화 단위 (~11 m 격자) |
+| `_labelHeightOffset` | float | 8 m | 레이블 월드 위치 상향 오프셋 |
+| `_labelMaxDistance` | float | 400 m | 이 거리 이상 레이블 숨김 |
+| `_fontSize` | int (10~36) | 15 | 레이블 글자 크기 |
+| `_textColor` | Color | 흰색 92% | 텍스트 색상 |
+| `_bgColor` | Color | 검정 55% | 배경 박스 색상 |
+| `_padding` | Vector2 | (7, 4) px | 텍스트 패딩 |
+| `_georeference` | CesiumGeoreference | 자동탐색 | Unity→WGS84 역변환 참조 |
+
+**처리 흐름:**
+```
+Update() _checkInterval마다
+  └─ ScanViewport() 코루틴
+       7×7 뷰포트 Raycast
+       hit.y > groundY + 4m → 건물 판정
+       UnityToLonLatHeight(hit.point)
+         ECEF → CesiumWgs84Ellipsoid → (lon, lat)
+       ToGpsKey() 양자화 캐시 키
+       캐시 미스 → FetchBuildingName()
+         GET /v2/local/geo/coord2address.json
+         road_address.building_name → _nameCache[key]
+OnGUI()
+  WorldToScreenPoint → guiY = Screen.height - screenPos.y
+  DrawLabel() → Box + Label
+```
+
+**상호작용:**
+- ← `CesiumGeoreference` (TransformUnityPositionToEarthCenteredEarthFixed)
+- → Kakao Local API coord2address
+
+### 16.3 RouteRenderer 주요 변경 사항
+
+`SampleTerrainUpward()` → `SampleTerrainDownward()` 교체:
+
+**변경 전 문제:** 경로 waypoints의 Y가 실제 지형과 다를 때 상향 레이캐스트가 건물 바닥을 감지.
+
+**변경 후 동작:**
+```csharp
+private Vector3 SampleTerrainDownward(Vector3 pos)
+{
+    float camY  = Camera.main.transform.position.y; // 항상 지형 위 → 신뢰 가능한 기준
+    float origY = camY + _groundSearchRange;         // 기본 100m 위
+    float maxD  = origY - (pos.y - _groundSearchRange) + 50f;
+    if (Physics.Raycast(new Vector3(pos.x, origY, pos.z), Vector3.down, out hit, maxD, mask))
+        return new Vector3(pos.x, hit.point.y + _groundOffset, pos.z);
+    return new Vector3(pos.x, camY - 2f + _groundOffset, pos.z); // 타일 미로드 폴백
+}
+```
+
+변경된 Inspector 기본값:
+
+| 필드 | 변경 전 | 변경 후 |
+|---|---|---|
+| `_lineWidth` | 2.5 m | 4.0 m |
+| `_groundSearchRange` | 50 m | 100 m |
+
+### 16.4 NavigationService 주요 변경 사항
+
+**스테일 콜백 방지:** `_routeRequestId` (int) 추가. `SetDestination()` / `ClearNavigation()` 호출 시 증가. 비동기 콜백에서 현재 값과 비교해 오래된 응답 무시.
+
+**직선 경로 fallback 추가 (Codex 수정):** NavMesh + 도로 메쉬 A* 모두 실패 시 `null` 대신 시작점→목적지 2점 직선 경로 반환. RouteRenderer에 유효한 waypoints가 전달되어 선이 표시됨.
+
+### 16.5 단계별 전체 파이프라인 요약 (코드 기준)
+
+```
+1단계: 앱 시작
+  LocationPermissionHandler → (권한 허용) → GPSLocationService.StartGPS()
+  GPSLocationService: WGS84 → ECEF → Unity, Lerp 보간 (1초 폴링)
+  에디터: CesiumGeoreference 원점 좌표로 시뮬레이션
+
+2단계: 카메라 이동/회전
+  GPSLocationService.OnRawPositionUpdated
+    → FirstPersonGPSController.OnGPSPositionUpdated()
+       ├─ 지형 높이: Cesium3DTileset.SampleHeightMostDetailed() 또는 Raycast 폴백
+       ├─ 건물 충돌: 수평 Raycast 6방향 → Road 레이어 XZ 고정
+       └─ CesiumGlobeAnchor 위치 갱신
+  회전: Gyro(AttitudeSensor) / Drag(Pointer.current) / Locked
+
+3단계: 지형 앵커 갱신
+  CameraNavAnchor.LateUpdate()
+    Physics.Raycast(Camera.y + 500m → 하방)
+    → mainCameraNav.position = hit.y (지형 표면)
+    → NavigationService / RouteRenderer에 기준점 제공
+
+4단계: 내비게이션
+  NavigationUIController → KakaoPlaceSearchService.Search() → POIData
+  → NavigationService.SetDestination()
+  → CalculateRoute():
+     1. KakaoDirectionsService API (도로 경로)
+     2. NavMesh.CalculatePath()
+     3. Road Layer A* 그리드
+     4. 직선 폴백 (시작→목적지)
+  → OnRouteCalculated 이벤트
+
+5단계: 경로 렌더링
+  RouteRenderer.ShowRoute(waypoints[])
+    ProjectOnNavMeshAndTerrain():
+      5m 간격 보간 → SampleTerrainDownward()
+        Camera.y + 100m 기준 하방 Raycast → 지형 표면 Y + 0.3m
+    LineRenderer 설정 + 목적지 구체 마커
+  Update() Navigating 상태:
+    TrimFromPlayerPosition(navAnchor.NavTransform) → 지나간 구간 제거
+
+6단계: 미니맵
+  MinimapController: 직교 카메라(+400m) → RenderTexture(256px)
+  오버뷰 모드: 경로 전체 가시 범위로 자동 조정
+
+7단계: 건물 레이블
+  BuildingLabelManager: 2.5초마다 7×7 격자 Raycast
+  건물 감지 → GPS 역변환 → Kakao coord2address → 캐시
+  OnGUI: WorldToScreenPoint → 반투명 박스+텍스트
+```
+
+### 16.6 컴포넌트 상호작용 매트릭스 (신규 컴포넌트 포함)
+
+```
+[입력 레이어]
+MobileInputSetup ──────────────────── EnhancedTouchSupport 활성화
+LocationPermissionHandler ─────────── GPS 권한 → OnPermissionGranted
+                                               │
+                                               ▼
+[위치 레이어]
+GPSLocationService ─────────────────── WGS84→Unity, SmoothedUnityPosition
+     │ OnRawPositionUpdated            CurrentLatitude/Longitude
+     ▼
+[카메라 레이어]
+FirstPersonGPSController ──────────── Gyro/Drag/Locked 회전
+     │ CesiumGlobeAnchor              건물 충돌 보정
+     │                                │ LateUpdate
+     │                                ▼
+     │                          CameraNavAnchor
+     │                          └─ mainCameraNav (지형 표면 Y)
+     │                                │ NavTransform
+     │                     ┌──────────┴──────────┐
+     │                     ▼                     ▼
+[내비게이션 레이어]   NavigationService       RouteRenderer
+KakaoPlaceSearch ──── SetDestination()        ShowRoute()
+KakaoDirections ────► CalculateRoute()        TrimFromPlayerPosition()
+                      OnRouteCalculated ────► ShowRoute()
+                             │
+                      NavigationUIController (OnGUI 5상태 UI)
+                             │
+                      MinimapController (RenderTexture 탑뷰)
+
+[보조 레이어]
+CesiumCreditReducer ─── UIDocument PickingMode.Ignore
+BuildingLabelManager ─── CesiumGeoreference → Kakao coord2address → OnGUI 레이블
+```
+
 ### 15.9 주요 기능 간 상호작용 맵
 
 ```
@@ -1450,3 +1677,181 @@ dorohe
 ├─ Cesium3DTileset
 └─ NavMeshSurface
 ```
+
+## 17. 사용자-프로그램-Front-Backend-플랫폼 런타임 상호작용 통합 다이어그램
+
+이 섹션은 앞선 파이프라인 분석을 바탕으로 런타임 중 사용자, 프로그램 Front, 프로그램 Core, Backend/API, 플랫폼/엔진 계층이 어떻게 상호작용하는지 하나의 다이어그램으로 정리한 것이다.
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  사용자 계층                                                                  │
+│                                                                              │
+│  사용자                                                                       │
+│  ├─ 앱 실행                                                                   │
+│  ├─ 위치 권한 허용/거부                                                        │
+│  ├─ 기기 이동                                                                  │
+│  ├─ 기기 회전 / 드래그 회전                                                     │
+│  ├─ 목적지 검색어 입력                                                          │
+│  ├─ 검색 결과 선택                                                             │
+│  ├─ 경로 확인 / 이동 시작                                                       │
+│  └─ 내비게이션 취소 또는 도착                                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      v
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  프로그램 Front 계층                                                          │
+│  화면 표시, 입력 수집, 사용자 피드백 담당                                        │
+│                                                                              │
+│  NavigationUIController                                                       │
+│  ├─ 검색 버튼 / 검색 패널                                                       │
+│  ├─ 검색 결과 목록                                                             │
+│  ├─ MapOverview 화면                                                           │
+│  ├─ Navigating 하단 바                                                         │
+│  ├─ Arrived overlay                                                           │
+│  └─ PlayerPrefs 최근 검색 저장/로드                                             │
+│                                                                              │
+│  MinimapController                                                            │
+│  ├─ 오른쪽 상단 미니맵 표시                                                     │
+│  ├─ 플레이어 방향 마커                                                          │
+│  └─ overview RenderTexture 제공                                                │
+│                                                                              │
+│  RouteRenderer                                                                │
+│  ├─ LineRenderer 경로선 표시                                                    │
+│  └─ 목적지 마커 표시                                                           │
+│                                                                              │
+│  BuildingLabelManager                                                         │
+│  └─ 건물명 OnGUI 라벨 표시                                                      │
+│                                                                              │
+│  CesiumCreditReducer                                                          │
+│  └─ Cesium credit UI 표시/입력 차단 조정                                         │
+└──────────────────────────────────────────────────────────────────────────────┘
+              │                                ▲
+              │ 사용자 입력 전달                 │ 상태/경로/좌표/라벨 결과 표시
+              v                                │
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  프로그램 Core 계층                                                           │
+│  실제 앱 상태, 위치, 경로, 좌표 변환, 배치 로직 담당                            │
+│                                                                              │
+│  LocationPermissionHandler                                                    │
+│  ├─ 플랫폼 위치 권한 요청                                                       │
+│  ├─ OnPermissionGranted                                                        │
+│  └─ OnPermissionDenied                                                         │
+│                                                                              │
+│  GPSLocationService                                                           │
+│  ├─ GPS 시작/중지                                                              │
+│  ├─ CurrentLatitude / CurrentLongitude / CurrentAltitude                       │
+│  ├─ WGS84 -> ECEF -> Unity Vector3 변환                                         │
+│  ├─ TargetUnityPosition                                                        │
+│  ├─ SmoothedUnityPosition                                                      │
+│  └─ OnRawPositionUpdated                                                       │
+│                                                                              │
+│  FirstPersonGPSController                                                     │
+│  ├─ GPS 위치를 카메라 목표 위치로 반영                                           │
+│  ├─ Cesium 지형 높이 샘플링                                                     │
+│  ├─ Raycast 지면 fallback                                                       │
+│  ├─ Gyro / Locked / Drag 회전 모드                                              │
+│  ├─ 건물 내부 충돌 감지 및 도로 XZ 보정                                          │
+│  └─ CesiumGlobeAnchor 위치 갱신                                                 │
+│                                                                              │
+│  NavigationService                                                            │
+│  ├─ CurrentDestination                                                         │
+│  ├─ CurrentRoute                                                               │
+│  ├─ DestinationWorldPos                                                        │
+│  ├─ DistanceToDestination                                                      │
+│  ├─ Kakao Directions -> NavMesh -> Road Grid -> 직선 fallback                  │
+│  ├─ OnRouteCalculated                                                          │
+│  ├─ OnNavigationCleared                                                        │
+│  └─ OnArrived                                                                  │
+│                                                                              │
+│  CameraNavAnchor                                                              │
+│  └─ 카메라 아래 지면 기준점 mainCameraNav 제공                                  │
+│                                                                              │
+│  RoadAssetPlacer                                                              │
+│  ├─ WGS84 좌표 기반 prefab 배치                                                  │
+│  ├─ NavMesh 기반 선형 배치                                                       │
+│  ├─ Road layer Raycast 지면 보정                                                 │
+│  ├─ CesiumGlobeAnchor 추가                                                      │
+│  └─ NavMeshSurface 빌드                                                         │
+└──────────────────────────────────────────────────────────────────────────────┘
+       │                         │                         │
+       │ API 요청/응답             │ 엔진/플랫폼 기능 호출       │ Cesium 좌표/타일 요청
+       v                         v                         v
+┌──────────────────────────────┐ ┌──────────────────────────────┐ ┌──────────────────────────────┐
+│  Backend / 외부 API 계층      │ │  플랫폼 / Unity 엔진 계층      │ │  Cesium 데이터 플랫폼 계층      │
+│                              │ │                              │ │                              │
+│  KakaoPlaceSearchService     │ │  Unity Runtime               │ │  Cesium for Unity             │
+│  ├─ Kakao Local API          │ │  ├─ GameObject/Component     │ │  ├─ CesiumGeoreference        │
+│  ├─ keyword search           │ │  ├─ Transform                │ │  ├─ Cesium3DTileset           │
+│  └─ POIData 변환             │ │  ├─ Coroutine                │ │  ├─ CesiumIonRasterOverlay    │
+│                              │ │  ├─ OnGUI                    │ │  ├─ CesiumGlobeAnchor         │
+│  KakaoDirectionsService      │ │  ├─ RenderTexture            │ │  ├─ CesiumCameraManager       │
+│  ├─ Kakao Mobility API       │ │  └─ LineRenderer             │ │  └─ SampleHeightMostDetailed  │
+│  ├─ directions route         │ │                              │ │                              │
+│  └─ vertexes -> waypoints    │ │  Unity Physics               │ │  Cesium ion assets            │
+│                              │ │  ├─ Physics.Raycast          │ │  ├─ World Terrain assetID 1   │
+│  BuildingLabelManager        │ │  ├─ Ground layer mask        │ │  ├─ Raster overlay assetID    │
+│  ├─ Kakao coord2address API  │ │  ├─ Road layer mask          │ │  │  3830184                   │
+│  └─ building_name 캐시       │ │  └─ Building layer mask      │ │  ├─ dorohe assetID 4609071   │
+│                              │ │                              │ │  └─ output_folder assetID     │
+│                              │ │  Unity AI Navigation         │ │     4545115                  │
+│                              │ │  ├─ NavMeshSurface           │ │                              │
+│                              │ │  ├─ NavMesh.SamplePosition   │ │                              │
+│                              │ │  └─ NavMesh.CalculatePath    │ │                              │
+│                              │ │                              │ │                              │
+│                              │ │  Device / OS                 │ │                              │
+│                              │ │  ├─ Android FineLocation     │ │                              │
+│                              │ │  ├─ iOS LocationService      │ │                              │
+│                              │ │  ├─ Input.location           │ │                              │
+│                              │ │  ├─ AttitudeSensor           │ │                              │
+│                              │ │  └─ Pointer / Touchscreen    │ │                              │
+└──────────────────────────────┘ └──────────────────────────────┘ └──────────────────────────────┘
+       ▲                         ▲                         ▲
+       │ API 결과                 │ Raycast/NavMesh/Input 결과 │ Tiles/height/coordinate 결과
+       └───────────────┬─────────┴───────────────┬─────────┘
+                       │                         │
+                       v                         v
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  프로그램 Core 상태 갱신                                                       │
+│                                                                              │
+│  GPSLocationService                                                           │
+│  └─ 현재 위치/보간 위치 갱신                                                    │
+│                                                                              │
+│  FirstPersonGPSController                                                     │
+│  └─ 카메라 위치/회전/높이/충돌 상태 갱신                                         │
+│                                                                              │
+│  NavigationService                                                            │
+│  └─ 목적지/경로/거리/도착 상태 갱신                                             │
+│                                                                              │
+│  RouteRenderer / MinimapController / BuildingLabelManager                     │
+│  └─ 화면에 표시할 경로, 미니맵, 라벨 데이터 갱신                                 │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      v
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  사용자에게 보이는 런타임 결과                                                  │
+│                                                                              │
+│  ├─ GPS 기반 1인칭 카메라 이동                                                   │
+│  ├─ 실시간 미니맵                                                               │
+│  ├─ 목적지 검색 결과                                                            │
+│  ├─ 경로 overview                                                               │
+│  ├─ 월드 공간 경로선                                                            │
+│  ├─ 목적지 마커                                                                 │
+│  ├─ 남은 거리/내비게이션 상태                                                     │
+│  ├─ 도착 알림                                                                   │
+│  └─ 건물명 라벨                                                                 │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+런타임 흐름을 한 줄로 요약하면 다음과 같다.
+
+```
+사용자 입력/기기 센서
+  -> Front UI/표시 계층
+  -> 프로그램 Core 상태/로직 계층
+  -> Backend API + Unity 플랫폼 + Cesium 데이터 플랫폼
+  -> Core 상태 갱신
+  -> Front 화면 갱신
+  -> 사용자 피드백
+```
+
+현재 `level2.unity` 연결 기준에서 Kakao 장소 검색과 건물명 조회는 씬에 연결되어 있고, Kakao Directions는 스크립트는 존재하지만 `NavigationService._directionsService`에 연결되어 있지 않다. 따라서 경로 계산 런타임은 Kakao Directions 계층을 선택적으로 포함하되, 현재 씬에서는 NavMesh/Road Grid/직선 fallback 계층이 실제 경로 계산 축이다.
