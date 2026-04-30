@@ -951,3 +951,502 @@ RoadAssetPlacer Inspector
 | `building nameTag Manager.BuildingLabelManager._georeference` -> `CesiumGeoreference` | 연결됨 |
 | `navUI.RoadAssetPlacer.assetPrefab` | 연결됨 |
 | `gpsm minimap.RoadAssetPlacer.assetPrefab` | 미연결 |
+
+## 15. 주요 기능 간 계층형 상호작용 다이어그램
+
+이 섹션은 주요 기능을 계층으로 나누고, 각 계층의 스크립트/Inspector가 어떤 방향으로 상호작용하는지 다이어그램으로 정리한 것이다.
+
+### 15.1 전체 기능 계층 구조
+
+```
+사용자 입력 / 모바일 센서 계층
+├─ LocationPermissionHandler Inspector
+│  └─ 위치 권한 확인, 권한 이벤트 발생
+├─ GPSLocationService Inspector
+│  └─ GPS 수신, WGS84 -> Unity 좌표 변환
+├─ FirstPersonGPSController Inspector
+│  └─ 카메라 위치/회전/충돌 보정
+└─ NavigationUIController Inspector
+   └─ 검색, 목적지 선택, 경로 확인, 주행 UI
+
+애플리케이션 로직 계층
+├─ NavigationService Inspector
+│  ├─ 목적지 상태 관리
+│  ├─ 경로 계산 우선순위 제어
+│  └─ 도착 판정
+├─ KakaoPlaceSearchService Inspector
+│  └─ 장소 검색 API 연동
+├─ KakaoDirectionsService Inspector
+│  └─ 도로 경로 API 연동
+├─ RouteRenderer Inspector
+│  └─ 경로 시각화
+├─ MinimapController Inspector
+│  └─ 미니맵/overview 렌더링
+├─ CameraNavAnchor Inspector
+│  └─ 카메라 아래 지면 기준점 제공
+├─ BuildingLabelManager Inspector
+│  └─ 건물명 조회/라벨 표시
+└─ RoadAssetPlacer Inspector
+   └─ 좌표 기반 시설물 배치/NavMesh 빌드
+
+공간 데이터 / 렌더링 인프라 계층
+├─ CesiumGeoreference Inspector
+│  └─ 지리 좌표계 기준
+├─ Cesium3DTileset Inspector
+│  ├─ Cesium World Terrain
+│  ├─ dorohe
+│  └─ output_folder
+├─ CesiumIonRasterOverlay Inspector
+│  └─ Cesium raster overlay
+├─ CesiumGlobeAnchor Inspector
+│  └─ 지구 좌표 기준 Transform 고정
+├─ CesiumCameraManager Inspector
+│  └─ Main Camera / additional cameras 관리
+├─ NavMeshSurface Inspector
+│  └─ 도로/지형 기반 NavMesh 데이터
+└─ Unity Physics / LayerMask
+   ├─ Road layer mask
+   ├─ Ground/Terrain layer mask
+   └─ Building layer mask
+```
+
+### 15.2 GPS 기반 1인칭 카메라 계층 다이어그램
+
+```
+[위치 권한 계층]
+LocationPermissionHandler
+├─ CheckAndRequestPermission()
+├─ OnPermissionGranted
+└─ OnPermissionDenied
+        |
+        v
+[GPS 수신 계층]
+GPSLocationService
+├─ StartGPS()
+├─ GPSUpdateLoop()
+├─ ConvertToUnityPosition()
+└─ OnRawPositionUpdated
+        |
+        v
+[카메라 제어 계층]
+FirstPersonGPSController
+├─ StartGPSTracking()
+├─ OnGPSPositionUpdated()
+├─ SampleAndUpdateGroundHeight()
+├─ UpdateRotation()
+├─ HandleBuildingCollision()
+└─ TeleportTo()
+        |
+        v
+[Cesium Transform 계층]
+CesiumGlobeAnchor
+└─ transform.position 갱신
+        |
+        v
+[렌더링 결과]
+Main Camera가 GPS 기반 1인칭 위치/방향으로 이동
+```
+
+상호작용 요약:
+
+1. `LocationPermissionHandler`는 권한 상태만 판단하고 이벤트를 발생시킨다.
+2. `FirstPersonGPSController`는 권한 이벤트를 받아 `GPSLocationService.StartGPS()`를 시작한다.
+3. `GPSLocationService`는 GPS를 Unity 좌표로 변환한 뒤 `OnRawPositionUpdated`로 알린다.
+4. `FirstPersonGPSController`는 지형 높이와 충돌 보정을 적용해 최종 카메라 위치를 만든다.
+5. 최종 위치는 `CesiumGlobeAnchor`를 통해 Cesium 좌표계 위에서 반영된다.
+
+### 15.3 Cesium 좌표/지형 높이 계층 다이어그램
+
+```
+[외부 좌표 입력]
+GPS WGS84
+├─ latitude
+├─ longitude
+└─ altitude
+        |
+        v
+[좌표 변환 계층]
+GPSLocationService.ConvertToUnityPosition()
+├─ CesiumWgs84Ellipsoid.LongitudeLatitudeHeightToEarthCenteredEarthFixed()
+└─ CesiumGeoreference.TransformEarthCenteredEarthFixedPositionToUnity()
+        |
+        v
+[Unity 공간 계층]
+Unity Vector3
+├─ TargetUnityPosition
+└─ SmoothedUnityPosition
+        |
+        v
+[지형 높이 보정 계층]
+FirstPersonGPSController.SampleAndUpdateGroundHeight()
+├─ Cesium3DTileset.SampleHeightMostDetailed()
+│  └─ 성공: Cesium terrain height 사용
+└─ Physics.Raycast()
+   └─ 실패 fallback: ground layer hit point 사용
+        |
+        v
+[최종 카메라 위치]
+Vector3(x, sampledGroundY + eyeHeight, z)
+```
+
+이 계층은 `GPSLocationService`, `FirstPersonGPSController`, `CesiumGeoreference`, `Cesium3DTileset`, Unity Physics가 함께 동작한다.
+
+### 15.4 목적지 검색/경로 계산 계층 다이어그램
+
+```
+[UI 계층]
+NavigationUIController
+├─ OpenSearch()
+├─ StartKakaoSearch()
+└─ SelectDestination()
+        |
+        v
+[검색 계층]
+KakaoPlaceSearchService
+├─ Search()
+├─ SearchCoroutine()
+└─ ParseDocuments()
+        |
+        v
+[목적지 데이터 계층]
+POIData
+├─ name
+├─ category
+├─ latitude
+└─ longitude
+        |
+        v
+[경로 서비스 계층]
+NavigationService
+├─ SetDestination()
+├─ CalculateRoute()
+├─ CalculateNavMeshRoute()
+├─ TryCalculateNavMeshRoute()
+├─ TryCalculateRoadMeshRoute()
+└─ CheckArrival()
+        |
+        v
+[경로 결과 이벤트]
+NavigationService.OnRouteCalculated
+        |
+        v
+[경로 표시 계층]
+NavigationUIController.HandleRouteCalculated()
+└─ RouteRenderer.ShowRoute()
+```
+
+경로 계산 내부 우선순위:
+
+```
+NavigationService.CalculateRoute()
+├─ 1순위: KakaoDirectionsService.RequestRoute()
+│  ├─ 성공: Kakao vertexes -> Unity waypoints
+│  └─ 실패: NavMesh fallback
+├─ 2순위: TryCalculateNavMeshRoute()
+│  ├─ NavMesh.SamplePosition()
+│  └─ NavMesh.CalculatePath()
+├─ 3순위: TryCalculateRoadMeshRoute()
+│  ├─ Road layer Raycast grid 생성
+│  └─ FindRoadGridPath() A* 탐색
+└─ 4순위: 직선 경로
+   └─ startPos -> destinationWorldPos
+```
+
+현재 `level2.unity` 기준으로 `NavigationService._directionsService`는 미연결이므로 실제 연결 상태에서는 NavMesh 이하 fallback 계층이 사용된다.
+
+### 15.5 경로 렌더링/미니맵/overview 계층 다이어그램
+
+```
+[경로 상태 계층]
+NavigationService
+├─ CurrentDestination
+├─ CurrentRoute
+├─ DistanceToDestination
+└─ IsNavigating
+        |
+        v
+[UI 상태 계층]
+NavigationUIController
+├─ None
+├─ SearchOpen
+├─ MapOverview
+├─ Navigating
+└─ Arrived
+        |
+        +-----------------------------+
+        |                             |
+        v                             v
+[월드 경로 렌더링 계층]        [지도/미니맵 계층]
+RouteRenderer                  MinimapController
+├─ ShowRoute()                 ├─ CreateMinimapCamera()
+├─ ProjectOnNavMeshAndTerrain()├─ EnterOverviewMode()
+├─ SnapToRoadSurface()         ├─ ExitOverviewMode()
+├─ DrawLine()                  └─ OverviewTexture
+└─ TrimFromPlayerPosition()            |
+        |                              v
+        v                      NavigationUIController.DrawMapOverview()
+LineRenderer                   └─ overview 지도 위 경로/마커 표시
+```
+
+주행 중 경로 갱신:
+
+```
+NavigationUIController.Update()
+└─ state == Navigating
+   └─ navPos 결정
+      ├─ CameraNavAnchor.NavTransform.position
+      ├─ Camera.main.transform.position
+      └─ GPSLocationService.SmoothedUnityPosition
+          |
+          v
+      RouteRenderer.TrimFromPlayerPosition(navPos)
+```
+
+### 15.6 CameraNavAnchor 기준점 계층 다이어그램
+
+```
+[Main Camera 계층]
+Camera.main.transform.position
+        |
+        v
+[지면 샘플링 계층]
+CameraNavAnchor.SampleGroundBelow()
+├─ origin = camera position + raycastOriginHeight
+├─ Physics.Raycast(Vector3.down)
+└─ groundLayerMask
+        |
+        v
+[기준점 계층]
+mainCameraNav Transform
+└─ NavTransform.position
+        |
+        +-----------------------------+
+        |                             |
+        v                             v
+NavigationService                 RouteRenderer
+├─ 경로 시작점으로 사용          └─ 경로 트리밍 기준으로 사용
+└─ GPS 위치보다 우선 사용
+```
+
+이 구조 때문에 실제 카메라의 공중 위치가 아니라 카메라 아래의 지면 위치가 내비게이션 기준점으로 사용된다.
+
+### 15.7 건물 라벨 표시 계층 다이어그램
+
+```
+[화면 스캔 계층]
+BuildingLabelManager.Update()
+└─ ScanViewport()
+   ├─ gridSize x gridSize viewport ray
+   ├─ Physics.Raycast()
+   └─ buildingLayerMask
+        |
+        v
+[건물 후보 필터 계층]
+hit.point.y >= groundY + buildingMinHeight
+        |
+        v
+[좌표 역변환 계층]
+BuildingLabelManager.UnityToLonLatHeight()
+├─ CesiumGeoreference.TransformUnityPositionToEarthCenteredEarthFixed()
+└─ CesiumWgs84Ellipsoid.EarthCenteredEarthFixedToLongitudeLatitudeHeight()
+        |
+        v
+[API/캐시 계층]
+ToGpsKey()
+├─ gpsQuantizeScale 기반 캐시 key
+└─ FetchBuildingName()
+   └─ Kakao coord2address API
+        |
+        v
+[라벨 렌더링 계층]
+BuildingLabelManager.OnGUI()
+├─ Camera.main.WorldToScreenPoint()
+├─ labelMaxDistance 검사
+└─ DrawLabel()
+```
+
+주요 상호작용:
+
+- `BuildingLabelManager`는 `CesiumGeoreference`에 의존해 Unity 좌표를 다시 WGS84로 바꾼다.
+- Kakao API 응답은 `_nameCache`에 저장된다.
+- `_labelPos`는 화면에 라벨을 그릴 월드 위치를 유지한다.
+
+### 15.8 시설물 배치/NavMesh 계층 다이어그램
+
+```
+[입력 데이터 계층]
+WGS84 좌표
+├─ line: startLat/startLon/endLat/endLon
+└─ point: latitude/longitude
+        |
+        v
+[좌표 변환 계층]
+RoadAssetPlacer
+├─ EnsureGeoreference()
+├─ CesiumWgs84Ellipsoid.LongitudeLatitudeHeightToEarthCenteredEarthFixed()
+└─ CesiumGeoreference.TransformEarthCenteredEarthFixedPositionToUnity()
+        |
+        v
+[도로/지면 보정 계층]
+├─ Line 배치
+│  ├─ NavMesh.SamplePosition()
+│  ├─ NavMesh.CalculatePath()
+│  └─ roadLayerMask Raycast
+└─ Point 배치
+   └─ roadLayerMask Raycast
+        |
+        v
+[객체 생성 계층]
+assetPrefab Instantiate
+├─ CesiumGlobeAnchor 추가
+├─ shadowCastingMode 조정
+└─ type group parent에 배치
+        |
+        v
+[최적화/관리 계층]
+├─ StaticBatchingUtility.Combine()
+├─ SetTypeVisible()
+├─ GetAllTypeNames()
+└─ ClearAllAssets()
+```
+
+NavMesh 빌드 흐름:
+
+```
+RoadAssetPlacer.BuildNavMesh()
+├─ NavMeshSurface 없으면 AddComponent
+├─ collectObjects = Children
+├─ layerMask = roadLayerMask
+└─ NavMeshSurface.BuildNavMesh()
+```
+
+### 15.9 주요 기능 간 상호작용 맵
+
+```
+GPS/카메라 기능
+├─ 제공 데이터
+│  ├─ 현재 GPS 위도/경도
+│  ├─ SmoothedUnityPosition
+│  └─ Main Camera Transform
+└─ 사용하는 기능
+   ├─ CesiumGeoreference 좌표 변환
+   ├─ Cesium World Terrain 높이 샘플링
+   └─ Unity Physics 지면/건물 Raycast
+
+내비게이션 기능
+├─ 사용하는 데이터
+│  ├─ GPSLocationService.CurrentLatitude/CurrentLongitude
+│  ├─ GPSLocationService.SmoothedUnityPosition
+│  ├─ CameraNavAnchor.NavTransform
+│  └─ POIData
+├─ 제공 데이터
+│  ├─ CurrentDestination
+│  ├─ CurrentRoute
+│  └─ DistanceToDestination
+└─ 이벤트
+   ├─ OnRouteCalculated
+   ├─ OnNavigationCleared
+   └─ OnArrived
+
+경로 시각화 기능
+├─ 사용하는 데이터
+│  ├─ NavigationService.CurrentRoute
+│  ├─ CameraNavAnchor.NavTransform
+│  └─ Terrain/Road Raycast hit
+└─ 제공 결과
+   ├─ LineRenderer 경로선
+   └─ 목적지 마커
+
+미니맵 기능
+├─ 사용하는 데이터
+│  ├─ Main Camera Transform
+│  ├─ NavigationService.DestinationWorldPos
+│  └─ NavigationService.CurrentRoute
+└─ 제공 결과
+   ├─ RenderTexture 미니맵
+   └─ overview 지도 텍스처
+
+건물 라벨 기능
+├─ 사용하는 데이터
+│  ├─ Camera.main viewport
+│  ├─ Building layer Raycast
+│  └─ CesiumGeoreference 역변환
+└─ 제공 결과
+   └─ 화면 건물명 라벨
+
+시설물 배치 기능
+├─ 사용하는 데이터
+│  ├─ WGS84 좌표
+│  ├─ CesiumGeoreference
+│  ├─ NavMesh
+│  └─ Road layer Raycast
+└─ 제공 결과
+   ├─ CesiumGlobeAnchor가 붙은 배치 객체
+   ├─ 타입별 parent group
+   └─ 필요 시 NavMeshSurface 빌드
+```
+
+### 15.10 씬 기준 실제 연결 계층
+
+```
+CesiumGeoreference
+├─ GPSLocationService._georeference
+├─ BuildingLabelManager._georeference
+├─ RoadAssetPlacer.EnsureGeoreference()에서 탐색 가능
+└─ CesiumCameraManager
+   └─ MinimapController가 런타임 미니맵 카메라 추가
+
+gpsm minimap
+├─ LocationPermissionHandler
+├─ GPSLocationService
+│  ├─ Main Camera.FirstPersonGPSController._gpsService
+│  ├─ navUI.NavigationService._gpsService
+│  ├─ navUI.NavigationUIController._gpsService
+│  └─ navUI.KakaoPlaceSearchService._gpsService
+├─ MinimapController
+│  ├─ _followTarget = Main Camera
+│  └─ navUI.NavigationUIController._minimapController
+└─ RoadAssetPlacer
+
+Main Camera
+├─ FirstPersonGPSController
+│  ├─ _permissionHandler = gpsm minimap.LocationPermissionHandler
+│  ├─ _gpsService = gpsm minimap.GPSLocationService
+│  └─ _worldTerrain = Cesium World Terrain.Cesium3DTileset
+├─ CesiumGlobeAnchor
+├─ CesiumOriginShift
+├─ CameraNavAnchor
+│  ├─ navUI.NavigationService._navAnchor
+│  └─ navUI.NavigationUIController._navAnchor
+└─ CesiumCreditReducer
+
+navUI
+├─ NavigationUIController
+│  ├─ _navService = navUI.NavigationService
+│  ├─ _routeRenderer = navUI.RouteRenderer
+│  ├─ _kakaoSearch = navUI.KakaoPlaceSearchService
+│  ├─ _gpsService = gpsm minimap.GPSLocationService
+│  ├─ _minimapController = gpsm minimap.MinimapController
+│  └─ _navAnchor = Main Camera.CameraNavAnchor
+├─ NavigationService
+│  ├─ _gpsService = gpsm minimap.GPSLocationService
+│  ├─ _playerController = Main Camera.FirstPersonGPSController
+│  ├─ _navAnchor = Main Camera.CameraNavAnchor
+│  └─ _directionsService = 미연결
+├─ RouteRenderer
+├─ KakaoPlaceSearchService
+└─ RoadAssetPlacer
+
+building nameTag Manager
+└─ BuildingLabelManager
+   └─ _georeference = CesiumGeoreference
+
+Cesium World Terrain
+├─ Cesium3DTileset
+│  └─ FirstPersonGPSController._worldTerrain
+└─ CesiumIonRasterOverlay
+
+dorohe
+├─ Cesium3DTileset
+└─ NavMeshSurface
+```
