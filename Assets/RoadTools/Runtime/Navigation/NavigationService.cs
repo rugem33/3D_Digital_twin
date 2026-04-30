@@ -34,7 +34,11 @@ namespace Rugem.RoadTools
         [SerializeField] private int _maxRoadGridCells = 30000;
 
         [Header("카카오 도로 경로 (선택)")]
-        [Tooltip("설정 시 카카오 모빌리티 API로 실제 도로 경로를 우선 사용합니다. 없으면 NavMesh 또는 도로 메쉬 경로.")]
+        [Tooltip("REST API 키를 직접 입력하면 카카오 모빌리티 API로 실제 도로 경로를 우선 사용합니다.\n" +
+                 "developers.kakao.com → 앱 → 앱 키 → REST API 키\n" +
+                 "비워두면 NavMesh 또는 도로 메쉬 경로로 폴백합니다.")]
+        [SerializeField] private string _kakaoRestApiKey = "";
+        [Tooltip("직접 키를 입력하지 않고 씬에 있는 KakaoDirectionsService 컴포넌트를 참조할 경우 여기에 연결합니다. (선택)")]
         [SerializeField] private KakaoDirectionsService _directionsService;
 
         [Header("POI 목록")]
@@ -83,8 +87,18 @@ namespace Rugem.RoadTools
                 _gpsService = FindAnyObjectByType<GPSLocationService>();
             if (_playerController == null)
                 _playerController = FindAnyObjectByType<FirstPersonGPSController>();
-            if (_directionsService == null)
+            // 키 직접 입력 우선 — 컴포넌트 참조 없이 자동 구성
+            if (!string.IsNullOrWhiteSpace(_kakaoRestApiKey))
+            {
+                if (_directionsService == null)
+                    _directionsService = gameObject.GetComponent<KakaoDirectionsService>()
+                                      ?? gameObject.AddComponent<KakaoDirectionsService>();
+                _directionsService.Initialize(_kakaoRestApiKey);
+            }
+            else if (_directionsService == null)
+            {
                 _directionsService = FindAnyObjectByType<KakaoDirectionsService>();
+            }
             if (_navAnchor == null)
                 _navAnchor = FindAnyObjectByType<CameraNavAnchor>();
 
@@ -93,6 +107,17 @@ namespace Rugem.RoadTools
                 int roadLayer = LayerMask.NameToLayer("Road");
                 if (roadLayer >= 0)
                     _roadLayerMask = 1 << roadLayer;
+            }
+
+            // "Road" 레이어가 없어도 RoadAssetPlacer에서 도로 레이어 자동 상속
+            if (_roadLayerMask == 0)
+            {
+                var placer = FindAnyObjectByType<RoadAssetPlacer>();
+                if (placer != null && placer.roadLayerMask != 0)
+                {
+                    _roadLayerMask = placer.roadLayerMask;
+                    Debug.Log($"[NavService] RoadAssetPlacer에서 도로 레이어 자동 감지: {_roadLayerMask.value}");
+                }
             }
         }
 
@@ -213,7 +238,7 @@ namespace Rugem.RoadTools
             ResolveDependencies();
             if (_gpsService == null) return;
 
-            // 우선순위: 카카오 Directions API → NavMesh → 도로 메쉬 샘플링
+            // 우선순위: 카카오 Directions API → 도로 메쉬 A* → NavMesh → 직선 폴백
             int requestId = _routeRequestId;
             POIData destinationSnapshot = CurrentDestination;
 
@@ -254,16 +279,16 @@ namespace Rugem.RoadTools
                 ? _navAnchor.NavTransform.position
                 : _gpsService.SmoothedUnityPosition;
 
-            if (TryCalculateNavMeshRoute(startPos, _destinationWorldPos, out Vector3[] navMeshRoute))
+            if (TryCalculateRoadMeshRoute(startPos, _destinationWorldPos, out Vector3[] roadRoute))
             {
-                CurrentRoute = navMeshRoute;
+                CurrentRoute = roadRoute;
                 OnRouteCalculated?.Invoke(CurrentDestination, CurrentRoute);
                 return;
             }
 
-            if (TryCalculateRoadMeshRoute(startPos, _destinationWorldPos, out Vector3[] roadRoute))
+            if (TryCalculateNavMeshRoute(startPos, _destinationWorldPos, out Vector3[] navMeshRoute))
             {
-                CurrentRoute = roadRoute;
+                CurrentRoute = navMeshRoute;
                 OnRouteCalculated?.Invoke(CurrentDestination, CurrentRoute);
                 return;
             }
@@ -277,9 +302,18 @@ namespace Rugem.RoadTools
         {
             route = null;
 
+            // "Road" area 우선, 없으면 전체 영역 사용
+            int roadArea = NavMesh.GetAreaFromName("Road");
+            int areaMask = roadArea >= 0 ? 1 << roadArea : NavMesh.AllAreas;
+
             float sampleRadius = EffectiveNavMeshSampleRadius;
-            bool hasStart = NavMesh.SamplePosition(startPos, out NavMeshHit startHit, sampleRadius, NavMesh.AllAreas);
-            bool hasDest = NavMesh.SamplePosition(destPos, out NavMeshHit destHit, sampleRadius, NavMesh.AllAreas);
+            bool hasStart = NavMesh.SamplePosition(startPos, out NavMeshHit startHit, sampleRadius, areaMask);
+            bool hasDest  = NavMesh.SamplePosition(destPos,  out NavMeshHit destHit,  sampleRadius, areaMask);
+
+            // Road area 스냅 실패 시 AllAreas로 재시도
+            if (!hasStart) hasStart = NavMesh.SamplePosition(startPos, out startHit, sampleRadius, NavMesh.AllAreas);
+            if (!hasDest)  hasDest  = NavMesh.SamplePosition(destPos,  out destHit,  sampleRadius, NavMesh.AllAreas);
+
             if (!hasStart || !hasDest)
             {
                 Debug.LogWarning($"[NavService] NavMesh 스냅 실패 start={hasStart}, dest={hasDest}");
@@ -287,14 +321,31 @@ namespace Rugem.RoadTools
             }
 
             var path = new NavMeshPath();
-            bool found = NavMesh.CalculatePath(startHit.position, destHit.position, NavMesh.AllAreas, path);
-            if (!found || path.status != NavMeshPathStatus.PathComplete || path.corners == null || path.corners.Length < 2)
+            NavMesh.CalculatePath(startHit.position, destHit.position, areaMask, path);
+
+            // Road area 경로 실패 시 AllAreas로 재시도
+            if (path.status == NavMeshPathStatus.PathInvalid || path.corners == null || path.corners.Length < 2)
+                NavMesh.CalculatePath(startHit.position, destHit.position, NavMesh.AllAreas, path);
+
+            if (path.status == NavMeshPathStatus.PathInvalid || path.corners == null || path.corners.Length < 2)
             {
-                Debug.LogWarning($"[NavService] NavMesh 경로 실패 status={path.status}, corners={(path.corners == null ? 0 : path.corners.Length)}");
+                Debug.LogWarning($"[NavService] NavMesh 경로 실패 status={path.status}");
                 return false;
             }
 
+            if (path.status == NavMeshPathStatus.PathPartial)
+            {
+                // 목적지가 NavMesh 외부 — 부분 경로(도로 굴곡 포함) + 목적지 직선 연결
+                var partial = new Vector3[path.corners.Length + 1];
+                System.Array.Copy(path.corners, partial, path.corners.Length);
+                partial[path.corners.Length] = destPos;
+                route = partial;
+                Debug.LogWarning($"[NavService] NavMesh 부분 경로 사용: {route.Length} corners (PathPartial) — 목적지가 NavMesh 외부입니다.");
+                return true;
+            }
+
             route = path.corners;
+            Debug.Log($"[NavService] NavMesh 경로 계산 완료: {route.Length} corners");
             return true;
         }
 
@@ -338,6 +389,7 @@ namespace Rugem.RoadTools
 
             var walkable = new bool[width, height];
             var points = new Vector3[width, height];
+            int walkableCount = 0;
             for (int x = 0; x < width; x++)
             for (int z = 0; z < height; z++)
             {
@@ -346,20 +398,28 @@ namespace Rugem.RoadTools
                 {
                     walkable[x, z] = true;
                     points[x, z] = hit;
+                    walkableCount++;
                 }
             }
 
+            // 도로 메쉬 불연속 구간 보완: 1셀 팽창으로 인접 walkable 셀 사이 공백 연결
+            // (도로 세그먼트 간 작은 틈을 메워 A* 연결성 확보)
+            BridgeWalkableGaps(walkable, points, minX, minZ, step);
+
             Vector2Int startCell = FindNearestWalkableCell(roadStart, minX, minZ, step, walkable);
             Vector2Int destCell = FindNearestWalkableCell(roadDest, minX, minZ, step, walkable);
+
+            Debug.Log($"[NavService] 도로 메쉬 A* 그리드: {width}x{height}, 도로 셀={walkableCount}, step={step:F1}m, start={startCell}, dest={destCell}");
+
             if (startCell.x < 0 || destCell.x < 0)
             {
-                Debug.LogWarning("[NavService] 도로 메쉬 그래프 시작/목적 셀 탐색 실패");
+                Debug.LogWarning($"[NavService] 도로 메쉬 그래프 시작/목적 셀 탐색 실패 — walkable 셀 {walkableCount}개. Road 레이어 레이캐스트 히트 없음 (roadLayerMask={_roadLayerMask.value})");
                 return false;
             }
 
             if (!FindRoadGridPath(startCell, destCell, walkable, points, out List<Vector3> pathPoints))
             {
-                Debug.LogWarning("[NavService] 도로 메쉬 A* 경로 실패");
+                Debug.LogWarning($"[NavService] 도로 메쉬 A* 경로 실패 — 그리드 {width}x{height} ({walkableCount} walkable), start={startCell}, dest={destCell}. 도로 세그먼트가 연결되지 않았거나 _roadSearchPadding({_roadSearchPadding}m)이 너무 작을 수 있습니다.");
                 return false;
             }
 
@@ -507,6 +567,47 @@ namespace Rugem.RoadTools
             }
             path.Reverse();
             return path;
+        }
+
+        /// <summary>
+        /// 도로 메쉬 불연속 구간 보완 — walkable 셀 주변 1칸을 팽창해 인접 세그먼트 연결.
+        /// 빈 셀의 8방향 이웃 중 walkable 셀이 있으면 그 road 표면 Y를 빌려 현재 셀 XZ와 합성합니다.
+        /// </summary>
+        private static void BridgeWalkableGaps(bool[,] walkable, Vector3[,] points, float minX, float minZ, float step)
+        {
+            int w = walkable.GetLength(0);
+            int h = walkable.GetLength(1);
+
+            var toFill = new List<(int x, int z, Vector3 pt)>();
+
+            for (int x = 0; x < w; x++)
+            for (int z = 0; z < h; z++)
+            {
+                if (walkable[x, z]) continue;
+
+                bool filled = false;
+                for (int dx = -1; dx <= 1 && !filled; dx++)
+                for (int dz = -1; dz <= 1 && !filled; dz++)
+                {
+                    if (dx == 0 && dz == 0) continue;
+                    int nx = x + dx, nz = z + dz;
+                    if (nx < 0 || nz < 0 || nx >= w || nz >= h) continue;
+                    if (!walkable[nx, nz]) continue;
+
+                    // 이 셀의 월드 XZ + 이웃 road 표면 Y
+                    float worldX = minX + x * step;
+                    float worldZ = minZ + z * step;
+                    float roadY  = points[nx, nz].y;
+                    toFill.Add((x, z, new Vector3(worldX, roadY, worldZ)));
+                    filled = true;
+                }
+            }
+
+            foreach (var (x, z, pt) in toFill)
+            {
+                walkable[x, z] = true;
+                points[x, z]   = pt;
+            }
         }
 
         private static List<Vector3> SimplifyRoute(List<Vector3> input)

@@ -5,20 +5,21 @@ using UnityEngine.AI;
 namespace Rugem.RoadTools
 {
     /// <summary>
-    /// NavMesh 경로를 도로면(World Terrain) 위에 실선으로 표시합니다.
+    /// 경로 waypoints를 도로 NavMesh + 도로 메쉬 표면에 투영하여 LineRenderer로 표시합니다.
     ///
-    /// 시작점:
-    ///   Camera.main 위치에서 수직 하방 Raycast → 카메라 아래 바닥면 Y 획득
-    ///   (카메라는 항상 도로 위에 있으므로 하방 레이가 정확한 도로면을 감지)
+    /// 경로 XZ 형상:
+    ///   각 waypoint 구간에서 NavMesh.CalculatePath를 호출해 도로 굴곡을 추출합니다.
+    ///   NavMesh 실패 시 _terrainSampleStep 간격으로 선형 보간 + NavMesh 스냅 폴백.
     ///
-    /// 경로 중간점:
-    ///   1. NavMesh.SamplePosition으로 도로면 Y 스냅
-    ///   2. 스냅 Y 기준으로 상향 Raycast → 지형/도로 표면에 미세 보정
-    ///      (건물 지붕은 NavMesh Y보다 위에 있으므로 절대 감지 안 됨)
+    /// 경로 Y(높이):
+    ///   1순위: _roadLayerMask 레이어 하방 Raycast (도로 메쉬 콜라이더)
+    ///   2순위: _terrainLayerMask 레이어 하방 Raycast (지형 전체)
+    ///   폴백: 카메라 지면 추정 Y
     ///
-    /// Raycast 실패(타일 미로드) 시 NavMesh Y + _groundOffset 폴백.
+    /// Inspector 설정:
+    ///   _roadLayerMask → "Road" 레이어 (NavigationService._roadLayerMask와 동일)
+    ///   _terrainLayerMask → 0이면 전체 레이어
     /// </summary>
-    [RequireComponent(typeof(LineRenderer))]
     public class RouteRenderer : MonoBehaviour
     {
         [Header("경로 선 설정")]
@@ -28,17 +29,21 @@ namespace Rugem.RoadTools
         [Tooltip("바닥면 위 선 높이 오프셋 (미터) — Z파이팅 방지 + 가시성 확보")]
         [SerializeField] private float _groundOffset    = 0.3f;
 
-        [Header("NavMesh · 지형 투영 설정")]
-        [Tooltip("세그먼트 보간 간격 (미터). 작을수록 도로 굴곡을 세밀하게 따름. 권장: 3~8")]
-        [SerializeField] private float _terrainSampleStep = 5f;
-        [Tooltip("각 보간 점을 NavMesh에 스냅할 탐색 반경 (미터). _terrainSampleStep 이상 권장")]
-        [SerializeField] private float _navMeshSnapRadius = 10f;
-        [Tooltip("Camera.main 기준 레이캐스트 상단 오프셋 (미터).\n" +
-                 "카메라 높이 + 이 값 위에서 하방으로 레이를 쏘아 지형 표면을 탐색합니다. 권장: 50~200")]
-        [SerializeField] private float _groundSearchRange = 100f;
+        [Header("도로 NavMesh · 레이어")]
+        [Tooltip("도로 메쉬 레이어. 설정 시 일반 지형보다 우선해 도로면 Y를 획득합니다.\n" +
+                 "NavigationService의 _roadLayerMask(Road 레이어)와 동일하게 설정하세요.")]
+        [SerializeField] private LayerMask _roadLayerMask;
         [Tooltip("지형/도로로 인식할 레이어. 0이면 전체 레이어 사용")]
         [SerializeField] private LayerMask _terrainLayerMask = ~0;
-        [Tooltip("세그먼트당 최대 보간 점 수 — 긴 직선 구간에서 성능 보호")]
+
+        [Header("NavMesh · 지형 투영 설정")]
+        [Tooltip("NavMesh 실패 시 선형 보간 간격 (미터). 권장: 3~8")]
+        [SerializeField] private float _terrainSampleStep = 5f;
+        [Tooltip("각 점을 NavMesh에 스냅할 탐색 반경 (미터)")]
+        [SerializeField] private float _navMeshSnapRadius = 30f;
+        [Tooltip("Camera.main 기준 레이캐스트 상단 오프셋 (미터). 권장: 50~200")]
+        [SerializeField] private float _groundSearchRange = 100f;
+        [Tooltip("구간당 최대 보간 점 수 — 긴 직선 구간에서 성능 보호")]
         [SerializeField] private int _maxSubdivisionsPerSegment = 60;
 
         [Header("목적지 마커")]
@@ -53,17 +58,37 @@ namespace Rugem.RoadTools
         // ── 내부 상태 ───────────────────────────────────────────────────────────
         private LineRenderer _line;
         private GameObject   _destinationMarker;
+        private Vector3[]    _fullRoute;
 
-        // NavMesh 스냅 + 지형 투영이 완료된 경로
-        private Vector3[] _fullRoute;
+        // 도로 NavMesh 영역 마스크 — "Road" area 자동 탐지, 없으면 AllAreas
+        private int _roadNavMeshAreaMask;
 
         // ── 생명주기 ────────────────────────────────────────────────────────────
 
         private void Awake()
         {
             _line = GetComponent<LineRenderer>();
+            if (_line == null)
+                _line = gameObject.AddComponent<LineRenderer>();
             ConfigureLine();
             CreateDestinationMarker();
+
+            int roadArea = NavMesh.GetAreaFromName("Road");
+            _roadNavMeshAreaMask = roadArea >= 0 ? 1 << roadArea : NavMesh.AllAreas;
+
+            // Inspector에 _roadLayerMask 미설정 시 RoadAssetPlacer에서 자동 상속
+            if (_roadLayerMask == 0)
+            {
+                int roadLayer = LayerMask.NameToLayer("Road");
+                if (roadLayer >= 0)
+                    _roadLayerMask = 1 << roadLayer;
+            }
+            if (_roadLayerMask == 0)
+            {
+                var placer = FindAnyObjectByType<RoadAssetPlacer>();
+                if (placer != null && placer.roadLayerMask != 0)
+                    _roadLayerMask = placer.roadLayerMask;
+            }
         }
 
         private void OnDestroy()
@@ -75,8 +100,7 @@ namespace Rugem.RoadTools
         // ── 공개 API ────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// NavMesh 경로 waypoints를 도로면 위에 실선으로 표시합니다.
-        /// 내부적으로 NavMesh 스냅 + 지형 투영을 수행합니다.
+        /// waypoints를 도로 NavMesh + 도로 메쉬 표면에 투영하여 경로를 표시합니다.
         /// </summary>
         public void ShowRoute(Vector3[] waypoints)
         {
@@ -87,7 +111,7 @@ namespace Rugem.RoadTools
                 return;
             }
 
-            _fullRoute = ProjectOnNavMeshAndTerrain(waypoints);
+            _fullRoute = BuildRoadRoute(waypoints);
             DrawLine(_fullRoute);
 
             if (_destinationMarker == null)
@@ -109,19 +133,15 @@ namespace Rugem.RoadTools
         }
 
         /// <summary>
-        /// 플레이어 위치(mainCameraNav 지형 정사영 위치 또는 카메라 위치)를 받아
-        /// 바로 아래 바닥면을 경로 시작점으로 설정하고 지나친 구간을 제거합니다.
+        /// 플레이어 위치에서 하방 Raycast로 도로면 Y를 보정하고 지나친 구간을 제거합니다.
         /// </summary>
         public void TrimFromPlayerPosition(Vector3 playerWorldPos)
         {
             EnsureInitialized();
             if (_fullRoute == null || _fullRoute.Length < 2) return;
 
-            int nearestIdx = FindNearestRouteIndex(playerWorldPos);
-
-            // 전달받은 위치에서 하방 Raycast로 도로면 Y 정밀 보정
-            // 이미 지형 표면(mainCameraNav)인 경우에도 동일 로직이 정확히 동작함
-            Vector3 projStart = SampleGroundBelowCamera(playerWorldPos, _fullRoute[nearestIdx].y);
+            int     nearestIdx = FindNearestRouteIndex(playerWorldPos);
+            Vector3 projStart  = SampleGroundBelowCamera(playerWorldPos, _fullRoute[nearestIdx].y);
 
             if (nearestIdx == 0)
             {
@@ -140,35 +160,39 @@ namespace Rugem.RoadTools
             }
         }
 
-        // ── NavMesh · 지형 투영 ──────────────────────────────────────────────────
+        // ── 도로 경로 생성 ──────────────────────────────────────────────────────
 
         /// <summary>
-        /// NavMesh 경로를 _terrainSampleStep 간격으로 보간하고
-        /// 각 점을 NavMesh 스냅 → 지형 상향 Raycast로 도로면에 투영합니다.
+        /// 입력 waypoints 각 구간을 NavMesh.CalculatePath로 도로 형상을 추출한 뒤
+        /// 각 코너를 도로 메쉬 표면에 Y 투영합니다.
+        ///
+        /// NavMesh 실패(bake 없음) 시: _terrainSampleStep 간격 보간 + NavMesh 스냅 폴백.
         /// </summary>
-        private Vector3[] ProjectOnNavMeshAndTerrain(Vector3[] waypoints)
+        private Vector3[] BuildRoadRoute(Vector3[] waypoints)
         {
-            var result = new List<Vector3>(waypoints.Length * 8);
+            var result = new List<Vector3>(waypoints.Length * 16);
+            result.Add(ProjectToRoadSurface(waypoints[0]));
 
-            for (int i = 0; i < waypoints.Length; i++)
+            for (int i = 0; i < waypoints.Length - 1; i++)
             {
-                result.Add(SnapToRoadSurface(waypoints[i]));
+                Vector3 a = waypoints[i];
+                Vector3 b = waypoints[i + 1];
 
-                if (i < waypoints.Length - 1)
+                // 구간별 NavMesh 경로 → 도로 굴곡 코너 추출
+                if (TryNavMeshSegmentCorners(a, b, out Vector3[] corners))
                 {
-                    Vector3 a = waypoints[i];
-                    Vector3 b = waypoints[i + 1];
-
+                    for (int k = 1; k < corners.Length; k++)
+                        result.Add(ProjectToRoadSurface(corners[k]));
+                }
+                else
+                {
+                    // NavMesh 없음 → 선형 보간 + 도로면 Y 투영
                     float segLen = new Vector2(b.x - a.x, b.z - a.z).magnitude;
-                    int steps = Mathf.Clamp(
+                    int   steps  = Mathf.Clamp(
                         Mathf.FloorToInt(segLen / _terrainSampleStep),
-                        0, _maxSubdivisionsPerSegment);
-
-                    for (int s = 1; s < steps; s++)
-                    {
-                        float t = (float)s / steps;
-                        result.Add(SnapToRoadSurface(Vector3.Lerp(a, b, t)));
-                    }
+                        1, _maxSubdivisionsPerSegment);
+                    for (int s = 1; s <= steps; s++)
+                        result.Add(ProjectToRoadSurface(Vector3.Lerp(a, b, (float)s / steps)));
                 }
             }
 
@@ -176,61 +200,102 @@ namespace Rugem.RoadTools
         }
 
         /// <summary>
-        /// 주어진 점을 도로면에 투영합니다.
-        ///   1단계: NavMesh.SamplePosition으로 도로면 Y 획득
-        ///   2단계: 그 Y 기준으로 상향 Raycast → 지형 표면 Y로 보정
+        /// 구간 [a→b]에 대해 도로 NavMesh 경로를 계산하고 코너 배열을 반환합니다.
+        /// "Road" area 없으면 AllAreas로 폴백.
         /// </summary>
-        private Vector3 SnapToRoadSurface(Vector3 pos)
+        private bool TryNavMeshSegmentCorners(Vector3 a, Vector3 b, out Vector3[] corners)
         {
-            // NavMesh가 없는 Cesium 환경에서는 스냅 실패 → pos 그대로 사용
-            Vector3 refPos = NavMesh.SamplePosition(pos, out NavMeshHit navHit, _navMeshSnapRadius, NavMesh.AllAreas)
-                ? navHit.position
-                : pos;
+            corners = null;
+            int mask = _roadNavMeshAreaMask;
 
-            return SampleTerrainDownward(refPos);
+            if (!NavMesh.SamplePosition(a, out NavMeshHit ah, _navMeshSnapRadius, mask)) return false;
+            if (!NavMesh.SamplePosition(b, out NavMeshHit bh, _navMeshSnapRadius, mask)) return false;
+
+            var path = new NavMeshPath();
+            NavMesh.CalculatePath(ah.position, bh.position, mask, path);
+
+            if (path.status == NavMeshPathStatus.PathInvalid || path.corners == null || path.corners.Length < 2)
+                return false;
+
+            if (path.status == NavMeshPathStatus.PathPartial)
+            {
+                // 구간 끝이 NavMesh 외부 — 부분 경로 + 구간 끝점 직선 연결
+                var partial = new Vector3[path.corners.Length + 1];
+                System.Array.Copy(path.corners, partial, path.corners.Length);
+                partial[path.corners.Length] = bh.position;
+                corners = partial;
+                return true;
+            }
+
+            corners = path.corners;
+            return true;
+        }
+
+        // ── 도로 표면 투영 ──────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 주어진 점을 도로 메쉬 표면에 투영합니다.
+        ///   Y 1순위: _roadLayerMask 하방 Raycast (도로 콜라이더)
+        ///   Y 2순위: _terrainLayerMask 하방 Raycast (지형 전체)
+        ///   폴백: 카메라 지면 추정 Y
+        /// </summary>
+        private Vector3 ProjectToRoadSurface(Vector3 pos)
+        {
+            if (_roadLayerMask != 0 && TrySampleDownward(pos, _roadLayerMask, out Vector3 roadPt))
+                return roadPt;
+            return SampleTerrainDownward(pos);
         }
 
         /// <summary>
-        /// 카메라 높이를 기준으로 수직 하방 Raycast로 지형 표면 Y를 샘플링합니다.
+        /// 지정 레이어 마스크로 카메라 높이 기준 하방 Raycast.
+        /// 성공 시 hit.point.y + _groundOffset 위치를 반환합니다.
+        /// </summary>
+        private bool TrySampleDownward(Vector3 pos, LayerMask mask, out Vector3 result)
+        {
+            float   camY   = Camera.main != null ? Camera.main.transform.position.y : pos.y;
+            float   origY  = camY + _groundSearchRange;
+            float   maxD   = origY - (pos.y - _groundSearchRange) + 50f;
+            Vector3 origin = new Vector3(pos.x, origY, pos.z);
+
+            if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, maxD, mask))
+            {
+                result = new Vector3(pos.x, hit.point.y + _groundOffset, pos.z);
+                return true;
+            }
+            result = default;
+            return false;
+        }
+
+        /// <summary>
+        /// _terrainLayerMask(또는 전체)로 하방 Raycast. 실패 시 카메라 지면 Y 폴백.
         ///
         /// Kakao API 웨이포인트는 고도 없이 변환되어 pos.y가 실제 지형 Y와 크게 다를 수 있습니다.
-        /// Camera.main.y (항상 GPS+Cesium으로 보정된 정확한 높이)를 기준으로 레이를 쏘므로
-        /// pos.y 오차에 관계없이 Cesium 타일 지형 표면을 안정적으로 감지합니다.
+        /// Camera.main.y (GPS+Cesium으로 보정된 높이)를 기준으로 레이를 쏘므로
+        /// pos.y 오차에 관계없이 지형 표면을 안정적으로 감지합니다.
         /// </summary>
         private Vector3 SampleTerrainDownward(Vector3 pos)
         {
             LayerMask mask = _terrainLayerMask == 0 ? ~0 : _terrainLayerMask;
-
-            // 카메라 높이 + 오프셋 위에서 하방으로 충분히 긴 레이캐스트
-            // Camera.main이 없으면 pos.y + _groundSearchRange 폴백
-            float    camY   = Camera.main != null ? Camera.main.transform.position.y : pos.y;
-            float    origY  = camY + _groundSearchRange;
-            float    maxD   = origY - (pos.y - _groundSearchRange) + 50f;
-            Vector3  origin = new Vector3(pos.x, origY, pos.z);
-
-            if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, maxD, mask))
-                return new Vector3(pos.x, hit.point.y + _groundOffset, pos.z);
-
-            // 폴백: 타일 미로드 상태 — 카메라 지면 Y 추정값 사용
+            if (TrySampleDownward(pos, mask, out Vector3 result))
+                return result;
+            float camY = Camera.main != null ? Camera.main.transform.position.y : pos.y;
             return new Vector3(pos.x, camY - 2f + _groundOffset, pos.z);
         }
 
         /// <summary>
-        /// 카메라 위치에서 수직 하방 Raycast로 바로 아래 도로면 Y를 샘플링합니다.
-        /// 카메라는 항상 도로/지형 위에 있으므로 하방 레이가 정확한 도로면을 감지합니다.
+        /// 카메라 위치 직하 도로면 Y를 샘플링합니다 (TrimFromPlayerPosition 시작점 보정용).
         /// </summary>
-        /// <param name="cameraPos">Camera.main.transform.position</param>
-        /// <param name="routeRefY">Raycast 실패 시 폴백으로 사용할 경로 참조 Y</param>
         private Vector3 SampleGroundBelowCamera(Vector3 cameraPos, float routeRefY)
         {
-            LayerMask mask   = _terrainLayerMask == 0 ? ~0 : _terrainLayerMask;
-            // 카메라보다 100m 위에서 아래로 쏘면 카메라 위치 직하 지면을 확실히 감지
-            Vector3   origin = new Vector3(cameraPos.x, cameraPos.y + 100f, cameraPos.z);
+            // 도로 메쉬 레이어 우선
+            if (_roadLayerMask != 0 && TrySampleDownward(cameraPos, _roadLayerMask, out Vector3 roadPt))
+                return roadPt;
 
+            LayerMask mask   = _terrainLayerMask == 0 ? ~0 : _terrainLayerMask;
+            Vector3   origin = new Vector3(cameraPos.x, cameraPos.y + 100f, cameraPos.z);
             if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, 1000f, mask))
                 return new Vector3(cameraPos.x, hit.point.y + _groundOffset, cameraPos.z);
 
-            // 폴백: 가장 가까운 경로 점 Y (이미 도로면에 투영된 값)
             return new Vector3(cameraPos.x, routeRefY, cameraPos.z);
         }
 
@@ -255,14 +320,12 @@ namespace Rugem.RoadTools
         {
             if (_line == null) return;
 
-            _line.startWidth        = _lineWidth;
-            _line.endWidth          = _lineWidth;
-            _line.startColor        = _routeStartColor;
-            _line.endColor          = _routeEndColor;
-            _line.useWorldSpace     = true;
-            _line.numCornerVertices = 4;
-            _line.numCapVertices    = 4;
-            _line.enabled           = false;
+            _line.startWidth    = _lineWidth;
+            _line.endWidth      = _lineWidth;
+            _line.startColor    = _routeStartColor;
+            _line.endColor      = _routeEndColor;
+            _line.useWorldSpace = true;
+            _line.enabled       = false;
 
             if (_routeMaterialOverride != null)
             {
@@ -270,7 +333,6 @@ namespace Rugem.RoadTools
             }
             else
             {
-                // URP 우선, Built-in 폴백 순서
                 var shader = Shader.Find("Universal Render Pipeline/Unlit")
                           ?? Shader.Find("Unlit/Color")
                           ?? Shader.Find("Sprites/Default");
@@ -310,7 +372,6 @@ namespace Rugem.RoadTools
             _destinationMarker.SetActive(false);
         }
 
-        /// <summary>NavMesh + 지형 투영이 완료된 점 배열을 LineRenderer에 직접 설정합니다.</summary>
         private void DrawLine(Vector3[] projected)
         {
             EnsureInitialized();
@@ -331,6 +392,8 @@ namespace Rugem.RoadTools
             if (_line == null)
             {
                 _line = GetComponent<LineRenderer>();
+                if (_line == null)
+                    _line = gameObject.AddComponent<LineRenderer>();
                 ConfigureLine();
             }
         }
