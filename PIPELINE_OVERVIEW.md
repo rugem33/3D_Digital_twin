@@ -510,3 +510,444 @@ MinimapController.EnterOverviewMode()
 - `MobileInputSetup.cs` 파일은 존재하지만 `level2.unity`의 주요 검색 결과에서는 해당 컴포넌트가 확인되지 않았다.
 - `RoadAssetPlacer`는 `navUI`와 `gpsm minimap` 양쪽에 붙어 있다. `navUI` 쪽은 `assetPrefab`이 연결되어 있고, `gpsm minimap` 쪽은 `assetPrefab`이 `{fileID: 0}`이다.
 - 소스 파일의 일부 한글 주석/문자열은 현재 읽기 결과에서 인코딩이 깨져 보였지만, 클래스명/메서드명/로직은 C# 구문 기준으로 확인했다.
+
+## 14. 주요 기능별 Inspector 종류, 기능, 상호작용
+
+이 섹션은 기존 분석 내용에 추가한 Inspector 중심 요약이다. 기준은 `Assets/RoadTools/Runtime/`의 `[SerializeField]`, `public` 필드, `Header` 속성, 그리고 `Assets/level2.unity`에 직렬화된 컴포넌트 연결이다.
+
+### 14.1 Inspector 종류 요약
+
+| Inspector 종류 | 대표 컴포넌트 | 주요 기능 | 씬 배치 확인 |
+|---|---|---|---|
+| 좌표/지리 참조 Inspector | `CesiumGeoreference`, `GPSLocationService` | WGS84/ECEF/Unity 좌표 변환 기준 제공, GPS 위치 수신값을 Unity 좌표로 변환 | `CesiumGeoreference`, `gpsm minimap` |
+| Cesium 타일셋 Inspector | `Cesium3DTileset`, `CesiumIonRasterOverlay` | Cesium ion 지형/3D Tiles/래스터 오버레이 로드, 물리 메시 생성 설정 | `Cesium World Terrain`, `dorohe`, `output_folder` |
+| 위치 권한 Inspector | `LocationPermissionHandler` | Android/iOS 위치 권한 요청, 거부 UI 버튼 연결 | `gpsm minimap` |
+| 1인칭 카메라 Inspector | `FirstPersonGPSController` | GPS 기반 카메라 위치 동기화, 지면 높이 보정, 회전 모드, 건물 충돌 보정 | `Main Camera` |
+| 내비게이션 서비스 Inspector | `NavigationService` | 목적지 설정, 경로 계산, 도착 판정, Kakao Directions/NavMesh/Road fallback 연결 | `navUI` |
+| 내비게이션 UI Inspector | `NavigationUIController` | 검색 UI, 지도 overview, 주행 바, 도착 overlay, 이벤트 구독 | `navUI` |
+| Kakao 검색 Inspector | `KakaoPlaceSearchService` | 키워드 장소 검색, 검색 반경/페이지/타임아웃/API 키 설정 | `navUI` |
+| Kakao 길찾기 Inspector | `KakaoDirectionsService` | Kakao Mobility Directions API 경로 요청 | 파일 존재, `level2.unity` 인스턴스 미확인 |
+| 경로 렌더링 Inspector | `RouteRenderer`, `LineRenderer` | 경로 선 색/두께/지면 투영/목적지 마커 표시 | `navUI` |
+| 미니맵 Inspector | `MinimapController` | 미니맵 카메라 생성, RenderTexture 표시, overview 모드 전환 | `gpsm minimap` |
+| 카메라 기준점 Inspector | `CameraNavAnchor` | `mainCameraNav` 생성/갱신, 카메라 아래 지면 위치를 경로 시작점으로 제공 | `Main Camera` |
+| 건물 라벨 Inspector | `BuildingLabelManager` | 화면 Raycast 기반 건물 후보 탐색, Kakao coord2address로 건물명 라벨 표시 | `building nameTag Manager` |
+| 시설물 배치 Inspector | `RoadAssetPlacer` | WGS84 좌표 기반 prefab 배치, NavMesh 빌드, 타입 그룹 가시성 관리 | `navUI`, `gpsm minimap` |
+| Cesium credit Inspector | `CesiumCreditReducer` | Cesium credit UI 크기/표시/picking 처리 | `Main Camera` |
+| 모바일 입력 Inspector | `MobileInputSetup` | EnhancedTouchSupport 활성화/비활성화 | 파일 존재, `level2.unity` 인스턴스 미확인 |
+
+### 14.2 GPS/카메라 기능 Inspector
+
+#### `GPSLocationService`
+
+파일: `Assets/RoadTools/Runtime/GPS/GPSLocationService.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| `_georeference` | Cesium 좌표 변환 기준 | `CesiumGeoreference` 참조 |
+| `_desiredAccuracyInMeters` | GPS 요청 정확도 | `1` |
+| `_updateDistanceInMeters` | GPS 갱신 최소 이동 거리 | `0.5` |
+| `_pollIntervalSeconds` | GPS polling 간격 | `1` |
+| `_lerpSpeed` | `SmoothedUnityPosition` 보간 속도 | `5` |
+
+상호작용:
+
+1. `LocationPermissionHandler` 또는 `FirstPersonGPSController`가 `StartGPS()`를 호출한다.
+2. GPS 수신 후 `OnRawPositionUpdated` 이벤트를 발생시킨다.
+3. `FirstPersonGPSController.OnGPSPositionUpdated()`가 이 이벤트를 받아 카메라 목표 위치를 갱신한다.
+4. `NavigationService`와 `KakaoPlaceSearchService`는 현재 위도/경도와 Unity 위치를 사용한다.
+
+#### `LocationPermissionHandler`
+
+파일: `Assets/RoadTools/Runtime/GPS/LocationPermissionHandler.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| `_permissionDeniedPanel` | 권한 거부 안내 패널 | 미연결 |
+| `_openSettingsButton` | 앱 설정 화면 이동 버튼 | 미연결 |
+| `_retryButton` | 권한 재요청 버튼 | 미연결 |
+
+상호작용:
+
+1. `Start()`에서 권한 확인/요청을 수행한다.
+2. 허용 시 `OnPermissionGranted` 이벤트를 발생시킨다.
+3. `FirstPersonGPSController`가 이벤트를 구독해 GPS tracking을 시작한다.
+
+#### `FirstPersonGPSController`
+
+파일: `Assets/RoadTools/Runtime/GPS/FirstPersonGPSController.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| `_gpsService` | GPS 위치 서비스 참조 | `gpsm minimap.GPSLocationService` |
+| `_permissionHandler` | 위치 권한 서비스 참조 | `gpsm minimap.LocationPermissionHandler` |
+| `_worldTerrain` | Cesium 지형 높이 샘플링 대상 | `Cesium World Terrain.Cesium3DTileset` |
+| `_eyeHeight` | 지면 위 카메라 높이 | `5` |
+| `_raycastOriginHeight` | 지면 Raycast 시작 높이 | `20` |
+| `_groundLayerMask` | 지면 감지 레이어 | `m_Bits: 128` |
+| `_positionLerpSpeed` | 카메라 위치 보간 속도 | `8` |
+| `_rotationLerpSpeed` | 회전 보간 속도 | `10` |
+| `_forceCompassOnly` | gyro 대신 compass 계열만 강제할지 여부 | `0` |
+| `_dragSensitivity` | Drag 회전 감도 | `0.3` |
+| `_buildingLayerMask` | 건물 충돌 감지 레이어 | `m_Bits: 256` |
+| `_roadLayerMask` | 건물 내부 보정용 도로 레이어 | `m_Bits: 64` |
+| `_buildingRayLength` | 건물 내부 판정 Ray 길이 | `15` |
+| `_roadSearchMaxRadius` | 가까운 도로 탐색 반경 | `30` |
+
+상호작용:
+
+1. `GPSLocationService`에서 받은 Unity 좌표를 카메라 목표 XZ로 사용한다.
+2. `_worldTerrain`이 있으면 Cesium `SampleHeightMostDetailed()`로 지면 높이를 샘플링한다.
+3. 샘플링 실패 시 `_groundLayerMask`로 Physics Raycast fallback을 수행한다.
+4. `CesiumGlobeAnchor` 위치를 갱신해 Cesium 지구 기준 이동을 수행한다.
+5. `NavigationService.MoveToDestination()`이 `TeleportTo()`를 호출하면 목적지 좌표로 즉시 이동한다.
+6. 건물 내부 감지 시 `_buildingLayerMask`와 `_roadLayerMask`를 사용해 XZ 위치를 보정한다.
+
+### 14.3 내비게이션/검색/렌더링 Inspector
+
+#### `NavigationService`
+
+파일: `Assets/RoadTools/Runtime/Navigation/NavigationService.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| `_gpsService` | 현재 위치/좌표 변환 서비스 | `gpsm minimap.GPSLocationService` |
+| `_playerController` | 목적지 즉시 이동 대상 | `Main Camera.FirstPersonGPSController` |
+| `_navAnchor` | 경로 시작 기준 지면 위치 | `Main Camera.CameraNavAnchor` |
+| `_arrivalRadius` | 도착 판정 반경 | `15` |
+| `_navMeshSampleRadius` | NavMesh 샘플링 반경 | `50` |
+| `_routeRefreshInterval` | 경로 재계산 주기 | `10` |
+| `_roadLayerMask` | 도로 fallback Raycast 레이어 | `m_Bits: 64` |
+| `_roadGridStep` | Road mesh A* 그리드 간격 | `8` |
+| `_roadSearchPadding` | Road mesh 탐색 영역 여백 | `40` |
+| `_roadRaycastHeight` | Road mesh Raycast 높이 | `500` |
+| `_maxRoadGridCells` | Road mesh 탐색 최대 셀 수 | `30000` |
+| `_directionsService` | Kakao Directions 서비스 | 미연결 |
+| `_poiList` | Inspector 등록 POI 목록 | 빈 목록 |
+
+상호작용:
+
+1. `NavigationUIController.SelectDestination()`이 `SetDestination()`을 호출한다.
+2. `GPSLocationService.ConvertToUnityPosition()`으로 목적지를 Unity 좌표로 변환한다.
+3. `_directionsService`가 연결되어 있으면 Kakao Directions를 우선 사용한다.
+4. 연결되어 있지 않거나 실패하면 NavMesh, Road mesh A*, 직선 fallback 순서로 경로를 만든다.
+5. 경로 계산 후 `OnRouteCalculated` 이벤트를 발생시켜 UI/렌더러에 전달한다.
+6. `Update()`에서 도착 거리와 도착 이벤트를 관리한다.
+
+#### `NavigationUIController`
+
+파일: `Assets/RoadTools/Runtime/Navigation/NavigationUIController.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| `_navService` | 목적지/경로 상태 관리 | `navUI.NavigationService` |
+| `_routeRenderer` | 월드 경로 선 표시 | `navUI.RouteRenderer` |
+| `_gpsService` | 현재 위치 표시/지도 좌표 기준 | `gpsm minimap.GPSLocationService` |
+| `_kakaoSearch` | 검색어 기반 POI 검색 | `navUI.KakaoPlaceSearchService` |
+| `_minimapController` | overview 지도 텍스처/좌표 변환 | `gpsm minimap.MinimapController` |
+| `_navAnchor` | 현재 지면 위치 기준 | `Main Camera.CameraNavAnchor` |
+| `_searchPanelHeightRatio` | 검색 패널 높이 비율 | `0.65` |
+| `_arrivedDisplayDuration` | 도착 overlay 표시 시간 | `3.5` |
+
+상호작용:
+
+1. `OnEnable()`에서 `NavigationService.OnRouteCalculated`, `OnNavigationCleared`, `OnArrived`를 구독한다.
+2. 검색 버튼/패널/overview/navigation/arrived 상태를 OnGUI로 그린다.
+3. `KakaoPlaceSearchService.Search()` 결과를 `POIData`로 받아 목적지 선택 목록에 표시한다.
+4. 목적지 선택 시 `NavigationService.SetDestination()`과 `MinimapController.EnterOverviewMode()`를 호출한다.
+5. 경로 계산 이벤트를 받으면 `RouteRenderer.ShowRoute()`를 호출한다.
+6. 주행 중에는 `RouteRenderer.TrimFromPlayerPosition()`으로 이미 지난 경로를 줄인다.
+
+#### `KakaoPlaceSearchService`
+
+파일: `Assets/RoadTools/Runtime/Navigation/KakaoPlaceSearchService.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| `_restApiKey` | Kakao REST API 키 | 직렬화된 문자열 있음 |
+| `_searchRadius` | 현재 위치 기준 검색 반경 | `2000` |
+| `_pageSize` | 한 페이지 결과 수 | `15` |
+| `_timeoutSeconds` | 요청 타임아웃 | `10` |
+| `_gpsService` | 검색 중심 좌표 제공 | `gpsm minimap.GPSLocationService` |
+
+상호작용:
+
+1. `NavigationUIController.StartKakaoSearch()`에서 호출된다.
+2. `_gpsService.CurrentLatitude/CurrentLongitude`를 기준으로 Kakao Local API 요청 URL을 만든다.
+3. 응답 document를 `POIData` 목록으로 변환해 UI에 돌려준다.
+
+#### `KakaoDirectionsService`
+
+파일: `Assets/RoadTools/Runtime/Navigation/KakaoDirectionsService.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| `_restApiKey` | Kakao Mobility REST API 키 | 인스턴스 미확인 |
+| `_timeoutSeconds` | 요청 타임아웃 | 인스턴스 미확인 |
+| `_gpsService` | vertex 좌표를 Unity 좌표로 변환 | 인스턴스 미확인 |
+
+상호작용:
+
+1. `NavigationService._directionsService`에 연결된 경우에만 사용된다.
+2. `RequestRoute()`가 Kakao Mobility Directions API에 origin/destination을 전달한다.
+3. 응답의 `vertexes` 배열을 `GPSLocationService.ConvertToUnityPosition()`으로 Unity 경로점 배열로 변환한다.
+4. 현재 `level2.unity`에서는 `_directionsService`가 미연결이므로 기본 실행 경로에는 포함되지 않는다.
+
+#### `RouteRenderer`
+
+파일: `Assets/RoadTools/Runtime/Navigation/RouteRenderer.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| `_routeStartColor` | 경로 시작 색 | `{r:0, g:0.55, b:1, a:0.95}` |
+| `_routeEndColor` | 경로 끝 색 | `{r:0, g:0.55, b:1, a:0.3}` |
+| `_lineWidth` | 경로 선 두께 | `2.5` |
+| `_groundOffset` | 지면 위 경로선 오프셋 | `0.5` |
+| `_terrainSampleStep` | 경로 보간 샘플 간격 | `5` |
+| `_navMeshSnapRadius` | NavMesh 재스냅 반경 | `10` |
+| `_groundSearchRange` | 지면 Raycast 탐색 범위 | `20` |
+| `_terrainLayerMask` | 경로 투영 지형 레이어 | `m_Bits: 128` |
+| `_maxSubdivisionsPerSegment` | 구간당 최대 보간 수 | `60` |
+| `_markerColor` | 목적지 마커 색 | `{r:1, g:0.35, b:0, a:1}` |
+| `_markerRadius` | 목적지 마커 반지름 | `4` |
+| `_routeMaterialOverride` | 경로 재질 override | 미연결 |
+| `_markerMaterialOverride` | 마커 재질 override | 미연결 |
+
+상호작용:
+
+1. `NavigationUIController.HandleRouteCalculated()`에서 `ShowRoute()`를 호출한다.
+2. `LineRenderer`에 경로 좌표를 설정한다.
+3. 경로점을 NavMesh/지형 표면으로 투영한 뒤 선을 표시한다.
+4. 목적지 마커 GameObject를 런타임에 생성하고 표시/숨김을 관리한다.
+
+### 14.4 미니맵/카메라 기준점 Inspector
+
+#### `MinimapController`
+
+파일: `Assets/RoadTools/Runtime/GPS/MinimapController.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| `_followTarget` | 미니맵 카메라가 따라갈 Transform | `Main Camera` Transform |
+| `_cameraHeight` | 미니맵 카메라 높이 | `400` |
+| `_orthographicSize` | 일반 모드 표시 범위 | `80` |
+| `_textureSize` | RenderTexture 해상도 | `256` |
+| `_mapSizeRatio` | 화면 높이 대비 미니맵 크기 비율 | `0.22` |
+| `_markerColor` | 플레이어 방향 마커 색 | `{r:1, g:0.25, b:0.25, a:1}` |
+| `_borderColor` | 미니맵 테두리 색 | `{r:0, g:0, b:0, a:0.8}` |
+
+상호작용:
+
+1. 런타임에 `[MinimapCamera]`와 `RenderTexture`를 만든다.
+2. `CesiumCameraManager.additionalCameras`에 미니맵 카메라를 등록한다.
+3. `NavigationUIController.SelectDestination()`이 `EnterOverviewMode()`를 호출한다.
+4. `NavigationUIController.DrawMapOverview()`는 `OverviewTexture`, `CurrentOrthoSize`, `CurrentCamPosition`을 사용한다.
+
+#### `CameraNavAnchor`
+
+파일: `Assets/RoadTools/Runtime/GPS/CameraNavAnchor.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| `_raycastOriginHeight` | 카메라 위 Raycast 시작 높이 | `500` |
+| `_groundLayerMask` | 지면 감지 레이어 | `m_Bits: 128` |
+
+상호작용:
+
+1. 자식 `mainCameraNav` Transform을 생성하거나 재사용한다.
+2. `Camera.main` 아래 지면 위치를 매 프레임 갱신한다.
+3. `NavigationService`는 경로 시작점으로 `NavTransform.position`을 우선 사용한다.
+4. `NavigationUIController`와 `RouteRenderer`는 경로 트리밍 기준점으로 이 위치를 사용한다.
+
+### 14.5 건물 라벨/시설물 배치 Inspector
+
+#### `BuildingLabelManager`
+
+파일: `Assets/RoadTools/Runtime/GPS/BuildingLabelManager.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| `_restApiKey` | Kakao coord2address API 키 | 직렬화된 문자열 있음 |
+| `_timeoutSeconds` | 요청 타임아웃 | `10` |
+| `_gridSize` | 화면 Raycast 격자 크기 | `7` |
+| `_checkInterval` | 화면 스캔 주기 | `2.5` |
+| `_buildingMinHeight` | 건물 후보 최소 높이 | `4` |
+| `_maxRayDistance` | Raycast 최대 거리 | `2000` |
+| `_buildingLayerMask` | 건물 감지 레이어 | `m_Bits: 256` |
+| `_gpsQuantizeScale` | 좌표 캐시 양자화 단위 | `0.0001` |
+| `_labelHeightOffset` | 라벨 표시 높이 offset | `8` |
+| `_labelMaxDistance` | 라벨 표시 최대 거리 | `400` |
+| `_fontSize` | 라벨 폰트 크기 | `15` |
+| `_textColor` | 라벨 텍스트 색 | `{r:1, g:1, b:1, a:0.92}` |
+| `_bgColor` | 라벨 배경 색 | `{r:0, g:0, b:0, a:0.55}` |
+| `_padding` | 라벨 padding | `{x:7, y:4}` |
+| `_georeference` | Unity 좌표를 WGS84로 역변환 | `CesiumGeoreference` 참조 |
+
+상호작용:
+
+1. 화면 격자 Raycast로 건물 후보 위치를 찾는다.
+2. `CesiumGeoreference`를 통해 Unity 좌표를 WGS84로 역변환한다.
+3. Kakao coord2address API로 건물명을 조회한다.
+4. `Camera.main.WorldToScreenPoint()` 기준으로 OnGUI 라벨을 그린다.
+
+#### `RoadAssetPlacer`
+
+파일: `Assets/RoadTools/Runtime/RoadAssetPlacer.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| `assetPrefab` | 배치할 prefab | `navUI`는 연결됨, `gpsm minimap`은 미연결 |
+| `raycastHeight` | 배치 지면 감지 Raycast 높이 | `210` |
+| `disableShadows` | 배치 후 shadow casting 비활성화 | `1` |
+| `applyStaticBatching` | 선형 배치 후 static batching 적용 | `1` |
+| `treeInterval` | 선형 배치 간격 | `10` |
+| `roadLayerMask` | 배치/도로 감지 레이어 | `m_Bits: 64` |
+| `_typeGroups` | 타입별 parent GameObject 목록 | 빈 목록 |
+
+상호작용:
+
+1. `CesiumGeoreference`를 찾아 WGS84 좌표를 Unity 좌표로 변환한다.
+2. `NavMeshSurface`와 `NavMesh`를 사용해 도로 기반 경로/배치 위치를 계산한다.
+3. `roadLayerMask` Raycast로 실제 배치 지면을 확인한다.
+4. 배치된 prefab에 `CesiumGlobeAnchor`를 추가한다.
+5. `BuildNavMesh()`는 같은 GameObject의 `NavMeshSurface`를 생성/사용해 자식 객체 기준 NavMesh를 빌드한다.
+
+### 14.6 Cesium/렌더링 보조 Inspector
+
+#### `CesiumCreditReducer`
+
+파일: `Assets/RoadTools/Runtime/GPS/CesiumCreditReducer.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| `_fontSize` | Cesium credit 텍스트 크기, 0이면 숨김 | `0` |
+| `_disableLinks` | 링크 클릭 차단 의도 필드 | `1` |
+
+상호작용:
+
+1. 씬의 `UIDocument`에서 `OnScreenCredits`를 찾는다.
+2. VisualElement tree의 `pickingMode`를 `Ignore`로 설정해 OnGUI 입력 차단을 줄인다.
+3. `_fontSize`에 따라 credit 표시 여부와 글자 크기를 조정한다.
+
+#### `MobileInputSetup`
+
+파일: `Assets/RoadTools/Runtime/GPS/MobileInputSetup.cs`
+
+Inspector 필드:
+
+| 필드 | 기능 | `level2.unity` 확인값 |
+|---|---|---|
+| 없음 | `EnhancedTouchSupport` 활성화/비활성화 | 인스턴스 미확인 |
+
+상호작용:
+
+1. `ENABLE_INPUT_SYSTEM` 조건에서 `Awake()`가 `EnhancedTouchSupport.Enable()`을 호출한다.
+2. `OnDestroy()`에서 `EnhancedTouchSupport.Disable()`을 호출한다.
+3. `FirstPersonGPSController.GetDragDelta()`는 `Pointer.current`를 사용하므로, 해당 컴포넌트는 보조 입력 초기화 역할이다.
+
+### 14.7 Inspector 간 상호작용 다이어그램
+
+#### GPS 위치 동기화
+
+```
+LocationPermissionHandler Inspector
+  -> OnPermissionGranted
+  -> FirstPersonGPSController Inspector
+      -> GPSLocationService Inspector
+          -> CesiumGeoreference Inspector
+          -> GPSLocationService.OnRawPositionUpdated
+      -> Cesium World Terrain Inspector
+      -> CesiumGlobeAnchor Inspector
+```
+
+#### 목적지 검색 및 경로 표시
+
+```
+NavigationUIController Inspector
+  -> KakaoPlaceSearchService Inspector
+      -> GPSLocationService Inspector
+  -> NavigationService Inspector
+      -> GPSLocationService Inspector
+      -> CameraNavAnchor Inspector
+      -> KakaoDirectionsService Inspector (현재 level2에서는 미연결)
+      -> NavMeshSurface / Road Layer
+  -> RouteRenderer Inspector
+      -> LineRenderer
+  -> MinimapController Inspector
+```
+
+#### 미니맵/overview
+
+```
+MinimapController Inspector
+  -> 런타임 [MinimapCamera]
+  -> RenderTexture
+  -> CesiumCameraManager.additionalCameras
+  -> NavigationUIController.DrawMapOverview()
+```
+
+#### 건물 라벨
+
+```
+BuildingLabelManager Inspector
+  -> Camera.main Viewport Raycast
+  -> Building Layer
+  -> CesiumGeoreference Inspector
+  -> Kakao coord2address API
+  -> OnGUI Label
+```
+
+#### 시설물 배치
+
+```
+RoadAssetPlacer Inspector
+  -> CesiumGeoreference Inspector
+  -> NavMesh / NavMeshSurface
+  -> Road Layer Raycast
+  -> assetPrefab Instantiate
+  -> CesiumGlobeAnchor 추가
+```
+
+### 14.8 현재 `level2.unity` 기준 연결 상태 체크리스트
+
+| 연결 | 상태 |
+|---|---|
+| `Main Camera.FirstPersonGPSController._gpsService` -> `gpsm minimap.GPSLocationService` | 연결됨 |
+| `Main Camera.FirstPersonGPSController._permissionHandler` -> `gpsm minimap.LocationPermissionHandler` | 연결됨 |
+| `Main Camera.FirstPersonGPSController._worldTerrain` -> `Cesium World Terrain.Cesium3DTileset` | 연결됨 |
+| `gpsm minimap.GPSLocationService._georeference` -> `CesiumGeoreference` | 연결됨 |
+| `gpsm minimap.MinimapController._followTarget` -> `Main Camera` | 연결됨 |
+| `navUI.NavigationUIController._navService` -> `navUI.NavigationService` | 연결됨 |
+| `navUI.NavigationUIController._routeRenderer` -> `navUI.RouteRenderer` | 연결됨 |
+| `navUI.NavigationUIController._kakaoSearch` -> `navUI.KakaoPlaceSearchService` | 연결됨 |
+| `navUI.NavigationUIController._minimapController` -> `gpsm minimap.MinimapController` | 연결됨 |
+| `navUI.NavigationUIController._navAnchor` -> `Main Camera.CameraNavAnchor` | 연결됨 |
+| `navUI.NavigationService._directionsService` -> `KakaoDirectionsService` | 미연결 |
+| `building nameTag Manager.BuildingLabelManager._georeference` -> `CesiumGeoreference` | 연결됨 |
+| `navUI.RoadAssetPlacer.assetPrefab` | 연결됨 |
+| `gpsm minimap.RoadAssetPlacer.assetPrefab` | 미연결 |
