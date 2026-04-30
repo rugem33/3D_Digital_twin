@@ -1,4 +1,3 @@
-using System.Threading.Tasks;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -18,6 +17,7 @@ namespace Rugem.RoadTools
     /// 새 Input System(com.unity.inputsystem) 전용 — AttitudeSensor, Touchscreen 사용
     /// </summary>
     [RequireComponent(typeof(Camera))]
+    [RequireComponent(typeof(CesiumGlobeAnchor))]
     public class FirstPersonGPSController : MonoBehaviour
     {
         [Header("의존성 연결")]
@@ -86,11 +86,20 @@ namespace Rugem.RoadTools
         private const float BuildingCheckInterval = 0.2f; // 초당 5회 체크
 
         private GUIStyle _btnStyle;
+        private GUIStyle _btnIconStyle;
+        private GUIStyle _btnLabelStyle;
+        private int _buttonStyleScreenWidth;
+        private int _buttonStyleScreenHeight;
+        private bool _gpsSubscribed;
+        private int _heightSampleVersion;
 
         // ── 유니티 생명주기 ────────────────────────────────────────────────────
 
         private void Awake()
         {
+            ResolveDependencies();
+            EnsureGlobeAnchor();
+
             // CesiumCameraController와 위치·회전 충돌 방지
             var cesiumCam = GetComponent<CesiumCameraController>();
             if (cesiumCam != null)
@@ -105,10 +114,8 @@ namespace Rugem.RoadTools
             _targetRotation = transform.rotation;
             InitializeSensors();
 
-            _globeAnchor = GetComponent<CesiumGlobeAnchor>();
-            if (_globeAnchor == null)
-                _globeAnchor = gameObject.AddComponent<CesiumGlobeAnchor>();
-            _globeAnchor.detectTransformChanges = false;
+            ResolveDependencies();
+            EnsureGlobeAnchor();
 
             if (_permissionHandler != null)
             {
@@ -128,6 +135,8 @@ namespace Rugem.RoadTools
             UpdateRotation();
 
             if (!_hasInitialPosition) return;
+            EnsureGlobeAnchor();
+            if (_globeAnchor == null) return;
 
             // 건물 충돌 처리 (0.2초 간격으로 체크)
             _buildingCheckTimer += Time.deltaTime;
@@ -172,6 +181,7 @@ namespace Rugem.RoadTools
 
             if (_gpsService != null)
                 _gpsService.OnRawPositionUpdated -= OnGPSPositionUpdated;
+            _gpsSubscribed = false;
             if (_permissionHandler != null)
             {
                 _permissionHandler.OnPermissionGranted -= OnPermissionGranted;
@@ -199,33 +209,111 @@ namespace Rugem.RoadTools
 
         private void OnGUI()
         {
-            if (_btnStyle == null)
-            {
-                _btnStyle = new GUIStyle(GUI.skin.button)
-                {
-                    fontSize  = Mathf.RoundToInt(Screen.height * 0.035f),
-                    fontStyle = FontStyle.Bold,
-                    alignment = TextAnchor.MiddleCenter
-                };
-            }
+            EnsureButtonStyles();
 
-            float margin  = Screen.width  * 0.03f;
-            float btnW    = Screen.width  * 0.22f;
-            float btnH    = Screen.height * 0.07f;
+            float margin  = Mathf.Clamp(Screen.width * 0.03f, 14f, 28f);
+            float btnSize = Mathf.Clamp(Screen.height * 0.060f, 46f, 58f);
             // 미니맵(화면 높이의 22%) 아래에 버튼 배치
             float mapSize = Screen.height * MinimapController.MapSizeRatioConst;
             float btnY    = margin + mapSize + margin * 0.4f;
+            float btnX    = Screen.width - btnSize - margin;
 
-            string label = _rotationMode switch
+            Rect buttonRect = new Rect(btnX, btnY, btnSize, btnSize);
+            if (GUI.Button(buttonRect, "", _btnStyle))
+                CycleRotationMode();
+
+            string icon = _rotationMode switch
             {
-                RotationMode.Gyro   => "자이로",
-                RotationMode.Locked => "고정",
-                RotationMode.Drag   => "드래그",
+                RotationMode.Gyro   => "◎",
+                RotationMode.Locked => "■",
+                RotationMode.Drag   => "↔",
                 _                   => "?"
             };
 
-            if (GUI.Button(new Rect(Screen.width - btnW - margin, btnY, btnW, btnH), label, _btnStyle))
-                CycleRotationMode();
+            string label = _rotationMode switch
+            {
+                RotationMode.Gyro   => "GYRO",
+                RotationMode.Locked => "LOCK",
+                RotationMode.Drag   => "DRAG",
+                _                   => "MODE"
+            };
+
+            GUI.Label(new Rect(buttonRect.x, buttonRect.y + btnSize * 0.05f, btnSize, btnSize * 0.58f), icon, _btnIconStyle);
+            GUI.Label(new Rect(buttonRect.x, buttonRect.y + btnSize * 0.60f, btnSize, btnSize * 0.32f), label, _btnLabelStyle);
+        }
+
+        private void EnsureButtonStyles()
+        {
+            if (_btnStyle != null
+                && _buttonStyleScreenWidth == Screen.width
+                && _buttonStyleScreenHeight == Screen.height)
+                return;
+
+            _buttonStyleScreenWidth = Screen.width;
+            _buttonStyleScreenHeight = Screen.height;
+
+            _btnStyle = new GUIStyle(GUI.skin.button)
+            {
+                fontSize  = Mathf.RoundToInt(Mathf.Clamp(Screen.height * 0.018f, 12f, 18f)),
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                padding   = new RectOffset(4, 4, 4, 4),
+                normal    = { textColor = Color.white, background = MakeSolidTex(new Color(0.08f, 0.12f, 0.18f, 0.92f)) },
+                hover     = { textColor = Color.white, background = MakeSolidTex(new Color(0.12f, 0.18f, 0.28f, 0.96f)) },
+                active    = { textColor = Color.white, background = MakeSolidTex(new Color(0.05f, 0.42f, 0.80f, 0.96f)) },
+            };
+
+            _btnIconStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize  = Mathf.RoundToInt(Mathf.Clamp(Screen.height * 0.032f, 22f, 32f)),
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                normal    = { textColor = Color.white },
+            };
+
+            _btnLabelStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize  = Mathf.RoundToInt(Mathf.Clamp(Screen.height * 0.011f, 8f, 11f)),
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                normal    = { textColor = new Color(0.76f, 0.88f, 1f, 1f) },
+            };
+        }
+
+        // ── 위치 이동 (길찾기 연동) ────────────────────────────────────────────
+
+        /// <summary>
+        /// 카메라를 지정 위경도 위치로 즉시 이동합니다 (길찾기 "여기로 이동" 용).
+        /// 이동 후 Cesium 지형 높이를 비동기로 재샘플링합니다.
+        /// </summary>
+        public void TeleportTo(double latitude, double longitude)
+        {
+            ResolveDependencies();
+            if (_gpsService == null)
+            {
+                Debug.LogError("[FirstPersonGPS] TeleportTo: GPSLocationService가 연결되지 않았습니다.");
+                return;
+            }
+
+            EnsureGlobeAnchor();
+            if (_globeAnchor == null)
+            {
+                Debug.LogError("[FirstPersonGPS] TeleportTo: CesiumGlobeAnchor를 초기화할 수 없습니다.");
+                return;
+            }
+
+            Vector3 rawPos = _gpsService.ConvertToUnityPosition(latitude, longitude, 0.0);
+            float tempY    = rawPos.y + _eyeHeight;
+
+            _targetPosition      = new Vector3(rawPos.x, tempY, rawPos.z);
+            _globeAnchor.transform.position = _targetPosition;
+            _hasInitialPosition  = true;
+            _cachedGroundY       = float.MinValue; // 지면 높이 재감지 트리거
+            _lastGroundCheckXZ   = Vector2.zero;
+
+            // 새 위치에서 비동기 지면 높이 샘플링 시작
+            SampleAndUpdateGroundHeight(latitude, longitude, rawPos);
+            Debug.Log($"[FirstPersonGPS] 위치 이동 → 위도={latitude:F6}, 경도={longitude:F6}");
         }
 
         // ── 회전 모드 전환 ─────────────────────────────────────────────────────
@@ -281,19 +369,18 @@ namespace Rugem.RoadTools
 
         /// <summary>
         /// 드래그 입력 델타 반환.
-        /// 에디터: 마우스 좌클릭 드래그 / 모바일: 단일 손가락 터치 드래그
+        /// Pointer.current 사용 — Touchscreen(실기기) · Mouse(에디터/시뮬레이터) 통합 처리.
+        /// Device Simulator에서 마우스 클릭이 터치로 자동 인식됩니다.
         /// </summary>
         private Vector2 GetDragDelta()
         {
-            // 모바일 터치 (press.isPressed 로 안정적으로 감지)
-            var ts = Touchscreen.current;
-            if (ts != null && ts.primaryTouch.press.isPressed)
-                return ts.primaryTouch.delta.ReadValue();
-
-            // 에디터 마우스 폴백
-            if (Mouse.current != null && Mouse.current.leftButton.isPressed)
-                return Mouse.current.delta.ReadValue() * 0.5f;
-
+            // Pointer.current: 마지막으로 활성화된 포인터 장치 (Touchscreen 또는 Mouse)
+            var pointer = Pointer.current;
+            if (pointer != null && pointer.press.isPressed)
+            {
+                float scale = pointer is Touchscreen ? 1.0f : 0.5f;
+                return pointer.delta.ReadValue() * scale;
+            }
             return Vector2.zero;
         }
 
@@ -319,6 +406,13 @@ namespace Rugem.RoadTools
 
         private void OnGPSPositionUpdated(Vector3 rawUnityPosition)
         {
+            if (!isActiveAndEnabled) return;
+
+            ResolveDependencies();
+            EnsureGlobeAnchor();
+            if (_gpsService == null || _globeAnchor == null)
+                return;
+
             var currentXZ = new Vector2(rawUnityPosition.x, rawUnityPosition.z);
             float movedDist = Vector2.Distance(currentXZ, _lastGroundCheckXZ);
 
@@ -353,14 +447,38 @@ namespace Rugem.RoadTools
 
         private void StartGPSTracking()
         {
+            ResolveDependencies();
             if (_gpsService == null)
             {
                 Debug.LogError("[FirstPersonGPS] GPSLocationService가 연결되지 않았습니다.");
                 return;
             }
-            _gpsService.OnRawPositionUpdated += OnGPSPositionUpdated;
+            if (!_gpsSubscribed)
+            {
+                _gpsService.OnRawPositionUpdated -= OnGPSPositionUpdated;
+                _gpsService.OnRawPositionUpdated += OnGPSPositionUpdated;
+                _gpsSubscribed = true;
+            }
             _gpsService.StartGPS();
             Debug.Log("[FirstPersonGPS] GPS 추적 시작");
+        }
+
+        private void ResolveDependencies()
+        {
+            if (_gpsService == null)
+                _gpsService = FindAnyObjectByType<GPSLocationService>();
+            if (_permissionHandler == null)
+                _permissionHandler = FindAnyObjectByType<LocationPermissionHandler>();
+        }
+
+        private void EnsureGlobeAnchor()
+        {
+            if (_globeAnchor != null) return;
+
+            _globeAnchor = GetComponent<CesiumGlobeAnchor>();
+            if (_globeAnchor == null)
+                _globeAnchor = gameObject.AddComponent<CesiumGlobeAnchor>();
+            _globeAnchor.detectTransformChanges = false;
         }
 
         /// <summary>
@@ -369,56 +487,66 @@ namespace Rugem.RoadTools
         /// </summary>
         private async void SampleAndUpdateGroundHeight(double lat, double lon, Vector3 rawUnityPosition)
         {
+            if (!isActiveAndEnabled || _gpsService == null) return;
+
+            int sampleVersion = ++_heightSampleVersion;
             _samplingHeight = true;
-            bool success = false;
-
-            if (_worldTerrain != null)
+            try
             {
-                try
+                bool success = false;
+
+                if (_worldTerrain != null && _worldTerrain.isActiveAndEnabled)
                 {
-                    CesiumSampleHeightResult result = await _worldTerrain.SampleHeightMostDetailed(
-                        new double3(lon, lat, 0.0));
-
-                    if (this == null) return; // GameObject가 파괴된 경우 조기 종료
-
-                    if (result.sampleSuccess != null && result.sampleSuccess.Length > 0 && result.sampleSuccess[0])
+                    try
                     {
-                        double sampledAlt = result.longitudeLatitudeHeightPositions[0].z;
-                        // 타일 고도(ellipsoid 기준)를 Unity 월드 좌표로 변환
-                        Vector3 groundUnity = _gpsService.ConvertToUnityPosition(lat, lon, sampledAlt);
-                        _cachedGroundY = groundUnity.y;
+                        CesiumSampleHeightResult result = await _worldTerrain.SampleHeightMostDetailed(
+                            new double3(lon, lat, 0.0));
+
+                        if (this == null || !isActiveAndEnabled || sampleVersion != _heightSampleVersion || _gpsService == null)
+                            return;
+
+                        if (result.sampleSuccess != null && result.sampleSuccess.Length > 0 && result.sampleSuccess[0])
+                        {
+                            double sampledAlt = result.longitudeLatitudeHeightPositions[0].z;
+                            // 타일 고도(ellipsoid 기준)를 Unity 월드 좌표로 변환
+                            Vector3 groundUnity = _gpsService.ConvertToUnityPosition(lat, lon, sampledAlt);
+                            _cachedGroundY = groundUnity.y;
+                            _lastGroundCheckXZ = new Vector2(rawUnityPosition.x, rawUnityPosition.z);
+                            // 비동기 완료 즉시 카메라 목표 Y 갱신
+                            _targetPosition = new Vector3(_targetPosition.x, _cachedGroundY + _eyeHeight, _targetPosition.z);
+                            success = true;
+                            Debug.Log($"[FirstPersonGPS] Cesium 지면 높이 성공: 고도={sampledAlt:F1}m → Unity Y={_cachedGroundY:F1}");
+                        }
+                        else
+                        {
+                            string warn = result.warnings != null && result.warnings.Length > 0 ? result.warnings[0] : "없음";
+                            Debug.LogWarning($"[FirstPersonGPS] Cesium 지면 샘플링 실패 (경고: {warn}) — Raycast 폴백");
+                        }
+                    }
+                    catch (System.Exception e)
+                    {
+                        if (this == null || !isActiveAndEnabled) return;
+                        Debug.LogWarning($"[FirstPersonGPS] Cesium 높이 샘플링 오류: {e.Message} — Raycast 폴백");
+                    }
+                }
+
+                // Cesium 샘플링 실패 또는 _worldTerrain 미설정 시 Physics.Raycast 폴백
+                if (!success)
+                {
+                    if (TryGetGroundHeightRaycast(rawUnityPosition, out float groundY))
+                    {
+                        _cachedGroundY = groundY;
                         _lastGroundCheckXZ = new Vector2(rawUnityPosition.x, rawUnityPosition.z);
-                        // 비동기 완료 즉시 카메라 목표 Y 갱신
                         _targetPosition = new Vector3(_targetPosition.x, _cachedGroundY + _eyeHeight, _targetPosition.z);
-                        success = true;
-                        Debug.Log($"[FirstPersonGPS] Cesium 지면 높이 성공: 고도={sampledAlt:F1}m → Unity Y={_cachedGroundY:F1}");
+                        Debug.Log($"[FirstPersonGPS] Raycast 지면 높이: Unity Y={groundY:F1}");
                     }
-                    else
-                    {
-                        string warn = result.warnings != null && result.warnings.Length > 0 ? result.warnings[0] : "없음";
-                        Debug.LogWarning($"[FirstPersonGPS] Cesium 지면 샘플링 실패 (경고: {warn}) — Raycast 폴백");
-                    }
-                }
-                catch (System.Exception e)
-                {
-                    if (this == null) return;
-                    Debug.LogWarning($"[FirstPersonGPS] Cesium 높이 샘플링 오류: {e.Message} — Raycast 폴백");
                 }
             }
-
-            // Cesium 샘플링 실패 또는 _worldTerrain 미설정 시 Physics.Raycast 폴백
-            if (!success)
+            finally
             {
-                if (TryGetGroundHeightRaycast(rawUnityPosition, out float groundY))
-                {
-                    _cachedGroundY = groundY;
-                    _lastGroundCheckXZ = new Vector2(rawUnityPosition.x, rawUnityPosition.z);
-                    _targetPosition = new Vector3(_targetPosition.x, _cachedGroundY + _eyeHeight, _targetPosition.z);
-                    Debug.Log($"[FirstPersonGPS] Raycast 지면 높이: Unity Y={groundY:F1}");
-                }
+                if (this != null && sampleVersion == _heightSampleVersion)
+                    _samplingHeight = false;
             }
-
-            _samplingHeight = false;
         }
 
         private bool TryGetGroundHeightRaycast(Vector3 position, out float groundY)
@@ -519,6 +647,14 @@ namespace Rugem.RoadTools
 
             Debug.LogWarning("[FirstPersonGPS] 인접 도로/개방 공간 탐색 실패 — 현재 위치 유지");
             return fromPos;
+        }
+
+        private static Texture2D MakeSolidTex(Color color)
+        {
+            var tex = new Texture2D(1, 1);
+            tex.SetPixel(0, 0, color);
+            tex.Apply();
+            return tex;
         }
     }
 }
