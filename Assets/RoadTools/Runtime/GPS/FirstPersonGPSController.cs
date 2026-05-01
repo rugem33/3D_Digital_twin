@@ -43,6 +43,8 @@ namespace Rugem.RoadTools
         [SerializeField] private float _rotationLerpSpeed = 10f;
         [Tooltip("ON: 자이로 없는 기기에서 컴퍼스(Y축)만 사용 / OFF: 자동 감지")]
         [SerializeField] private bool _forceCompassOnly = false;
+        [Tooltip("자이로 기준 yaw를 현재 카메라 yaw에 맞춰 시작합니다.")]
+        [SerializeField] private bool _autoCalibrateGyroYaw = true;
 
         [Header("드래그 회전")]
         [Tooltip("드래그 감도 (높을수록 민감)")]
@@ -65,6 +67,9 @@ namespace Rugem.RoadTools
 
         private Quaternion _targetRotation;
         private bool _gyroAvailable;
+        private bool _gyroYawCalibrated;
+        private float _gyroYawOffset;
+        private ScreenOrientation _lastScreenOrientation;
         private bool _samplingHeight;
 
         private CesiumGlobeAnchor _globeAnchor;
@@ -160,6 +165,7 @@ namespace Rugem.RoadTools
                 else
                 {
                     InputSystem.EnableDevice(AttitudeSensor.current);
+                    ResetGyroCalibration();
                     Debug.Log("[FirstPersonGPS] AttitudeSensor 재활성화 (앱 재개)");
                 }
             }
@@ -170,6 +176,7 @@ namespace Rugem.RoadTools
             if (hasFocus && _gyroAvailable && AttitudeSensor.current != null)
             {
                 InputSystem.EnableDevice(AttitudeSensor.current);
+                ResetGyroCalibration();
                 Debug.Log("[FirstPersonGPS] AttitudeSensor 재활성화 (포커스 복귀)");
             }
         }
@@ -326,6 +333,10 @@ namespace Rugem.RoadTools
             {
                 _lockedRotation = transform.rotation;
             }
+            else if (_rotationMode == RotationMode.Gyro)
+            {
+                ResetGyroCalibration();
+            }
             else if (_rotationMode == RotationMode.Drag)
             {
                 Vector3 euler = transform.rotation.eulerAngles;
@@ -345,7 +356,7 @@ namespace Rugem.RoadTools
                 case RotationMode.Gyro:
                     if (_gyroAvailable && AttitudeSensor.current != null)
                     {
-                        _targetRotation = GyroToWorldRotation(AttitudeSensor.current.attitude.ReadValue());
+                        _targetRotation = GetCalibratedGyroRotation(AttitudeSensor.current.attitude.ReadValue());
                         transform.rotation = Quaternion.Slerp(
                             transform.rotation, _targetRotation, Time.deltaTime * _rotationLerpSpeed);
                     }
@@ -388,11 +399,44 @@ namespace Rugem.RoadTools
         /// AttitudeSensor attitude(오른손 좌표계)를 Unity 카메라 회전(왼손 좌표계)으로 변환합니다.
         /// Portrait 모드 기준 — X축 90° 보정.
         /// </summary>
-        private static Quaternion GyroToWorldRotation(Quaternion attitude)
+        private void ResetGyroCalibration()
+        {
+            _gyroYawCalibrated = false;
+            _lastScreenOrientation = Screen.orientation;
+        }
+
+        private Quaternion GetCalibratedGyroRotation(Quaternion attitude)
         {
             // 오른손 → 왼손 좌표계: Z·W 부호 반전
+            Quaternion gyroRotation = GyroToWorldRotation(attitude, Screen.orientation);
+
+            if (_lastScreenOrientation != Screen.orientation)
+            {
+                _lastScreenOrientation = Screen.orientation;
+                _gyroYawCalibrated = false;
+            }
+
+            if (_autoCalibrateGyroYaw && !_gyroYawCalibrated)
+            {
+                _gyroYawOffset = Mathf.DeltaAngle(gyroRotation.eulerAngles.y, transform.eulerAngles.y);
+                _gyroYawCalibrated = true;
+            }
+
+            return Quaternion.Euler(0f, _gyroYawOffset, 0f) * gyroRotation;
+        }
+
+        private static Quaternion GyroToWorldRotation(Quaternion attitude, ScreenOrientation orientation)
+        {
             Quaternion q = new Quaternion(attitude.x, attitude.y, -attitude.z, -attitude.w);
-            return Quaternion.Euler(90f, 0f, 0f) * q;
+            Quaternion screenCompensation = orientation switch
+            {
+                ScreenOrientation.LandscapeLeft      => Quaternion.Euler(0f, 0f, -90f),
+                ScreenOrientation.LandscapeRight     => Quaternion.Euler(0f, 0f, 90f),
+                ScreenOrientation.PortraitUpsideDown => Quaternion.Euler(0f, 0f, 180f),
+                _                                    => Quaternion.identity
+            };
+
+            return Quaternion.Euler(90f, 0f, 0f) * screenCompensation * q;
         }
 
         // ── 이벤트 핸들러 ──────────────────────────────────────────────────────
@@ -551,8 +595,9 @@ namespace Rugem.RoadTools
 
         private bool TryGetGroundHeightRaycast(Vector3 position, out float groundY)
         {
-            Vector3 rayOrigin = new Vector3(position.x, position.y + _raycastOriginHeight, position.z);
-            float maxDist     = _raycastOriginHeight * 2f;
+            float originHeight = Mathf.Max(_raycastOriginHeight, 500f);
+            Vector3 rayOrigin = new Vector3(position.x, position.y + originHeight, position.z);
+            float maxDist     = originHeight * 2f + Mathf.Abs(position.y) + 100f;
 
             if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, maxDist, _groundLayerMask))
             {

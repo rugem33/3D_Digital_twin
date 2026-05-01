@@ -47,9 +47,15 @@ namespace Rugem.RoadTools
         private bool            _focusSearchOnce;
         private bool            _isSearching;
         private string          _searchError;
+        private bool            _hasPendingSuggestionSearch;
+        private float           _lastSearchInputChangeTime;
+        private int             _searchRequestVersion;
         private Rect            _overviewWorldBounds; // XZ 범위 (다이어그램 모드용)
 
         private const int    MaxRecentSearches = 10;
+        private const int    MaxSuggestionResults = 10;
+        private const int    SuggestionSearchRadiusMeters = 2000;
+        private const float  SuggestionSearchDelaySeconds = 0.35f;
         private const string PrefKeyCount      = "NavRecent_Count";
         private const string PrefKeyPOI        = "NavRecent_";
 
@@ -122,6 +128,8 @@ namespace Rugem.RoadTools
 
         private void Update()
         {
+            UpdateSuggestionSearch();
+
             if (_state == NavUIState.Arrived)
             {
                 _arrivedTimer -= Time.deltaTime;
@@ -165,8 +173,8 @@ namespace Rugem.RoadTools
             float mapSize = Screen.height * MinimapController.MapSizeRatioConst;
             float mapX    = Screen.width - mapSize - margin;
 
-            float btnW = Mathf.Clamp(Screen.width * 0.20f, 96f, 150f);
-            float btnH = Mathf.Clamp(Screen.height * 0.052f, 40f, 54f);
+            float btnW = Mathf.Clamp(Screen.width * 0.26f, 116f, 190f);
+            float btnH = Mathf.Clamp(Screen.height * 0.056f, 44f, 60f);
             float gap  = Mathf.Clamp(Screen.width * 0.012f, 8f, 14f);
             float btnX = Mathf.Max(margin, mapX - btnW - gap);
             float btnY = margin;
@@ -195,7 +203,7 @@ namespace Rugem.RoadTools
             float pad     = Mathf.Clamp(margin * 0.6f, 10f, 20f);
             float inner   = panelX + pad;
             float innerW  = panelW - pad * 2f;
-            float fieldH  = Mathf.Clamp(Screen.height * 0.065f, 46f, 64f);
+            float fieldH  = Mathf.Clamp(Screen.height * 0.072f, 52f, 72f);
             float closeSz = Mathf.Clamp(fieldH * 0.86f, 40f, 54f);
 
             GUI.Label(new Rect(inner, panelY + pad * 0.5f, innerW - closeSz - pad, fieldH * 0.7f),
@@ -209,7 +217,7 @@ namespace Rugem.RoadTools
             }
 
             float fieldY     = panelY + pad + fieldH * 0.7f + pad * 0.3f;
-            float searchBtnW = Mathf.Clamp(innerW * 0.22f, 74f, 116f);
+            float searchBtnW = Mathf.Clamp(innerW * 0.24f, 88f, 134f);
             float fieldActW  = innerW - searchBtnW - pad * 0.4f;
 
             if (_focusSearchOnce && Event.current.type == EventType.Layout)
@@ -222,7 +230,11 @@ namespace Rugem.RoadTools
             string newQuery = GUI.TextField(
                 new Rect(inner, fieldY, fieldActW, fieldH),
                 _searchQuery, _styleSearchField);
-            if (newQuery != _searchQuery) _searchQuery = newQuery;
+            if (newQuery != _searchQuery)
+            {
+                _searchQuery = newQuery;
+                QueueSuggestionSearch();
+            }
 
             if (Event.current.type == EventType.KeyDown && Event.current.keyCode == KeyCode.Return
                 && !_isSearching && !string.IsNullOrWhiteSpace(_searchQuery))
@@ -255,8 +267,8 @@ namespace Rugem.RoadTools
             else
             {
                 string countText = _searchResults.Count > 0
-                    ? $"{_searchResults.Count}개 결과"
-                    : "검색 결과 없음";
+                    ? $"{_searchResults.Count}개 연관검색어"
+                    : "연관검색어 없음";
                 GUI.Label(new Rect(inner, countY, innerW, fieldH * 0.55f), countText, _styleDistLabel);
             }
 
@@ -581,6 +593,8 @@ namespace Rugem.RoadTools
             _focusSearchOnce = true;
             _isSearching     = false;
             _searchError     = null;
+            _hasPendingSuggestionSearch = false;
+            _searchRequestVersion++;
             _showingRecents  = true;
             LoadRecentSearches();
             TransitionTo(NavUIState.SearchOpen);
@@ -588,8 +602,10 @@ namespace Rugem.RoadTools
 
         private void StartKakaoSearch()
         {
-            if (string.IsNullOrWhiteSpace(_searchQuery)) return;
+            string query = _searchQuery.Trim();
+            if (string.IsNullOrWhiteSpace(query)) return;
 
+            _hasPendingSuggestionSearch = false;
             _showingRecents = false;
 
             if (_kakaoSearch == null)
@@ -601,9 +617,11 @@ namespace Rugem.RoadTools
 
             _isSearching = true;
             _searchError = null;
-            _kakaoSearch.Search(_searchQuery, (results, error) =>
+            int requestVersion = ++_searchRequestVersion;
+            _kakaoSearch.Search(query, MaxSuggestionResults, SuggestionSearchRadiusMeters, (results, error) =>
             {
                 if (this == null || !isActiveAndEnabled) return;
+                if (requestVersion != _searchRequestVersion) return;
 
                 _isSearching = false;
                 if (error != null)
@@ -616,6 +634,41 @@ namespace Rugem.RoadTools
                 _searchResults = results ?? new List<POIData>();
                 _scrollPos     = Vector2.zero;
             });
+        }
+
+        private void QueueSuggestionSearch()
+        {
+            string query = _searchQuery.Trim();
+
+            _searchRequestVersion++;
+            _searchError = null;
+            _scrollPos = Vector2.zero;
+            _isSearching = false;
+
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                _hasPendingSuggestionSearch = false;
+                _isSearching = false;
+                _searchResults = new List<POIData>();
+                _showingRecents = true;
+                return;
+            }
+
+            _showingRecents = false;
+            _searchResults = new List<POIData>();
+            _hasPendingSuggestionSearch = true;
+            _lastSearchInputChangeTime = Time.unscaledTime;
+        }
+
+        private void UpdateSuggestionSearch()
+        {
+            if (_state != NavUIState.SearchOpen || !_hasPendingSuggestionSearch)
+                return;
+
+            if (Time.unscaledTime - _lastSearchInputChangeTime < SuggestionSearchDelaySeconds)
+                return;
+
+            StartKakaoSearch();
         }
 
         private void CloseSearch()

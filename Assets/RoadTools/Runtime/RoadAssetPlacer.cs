@@ -148,35 +148,24 @@ namespace Rugem.RoadTools
 
             if (!EnsureGeoreference()) return;
 
-            // 1. 위경도 -> Unity World 좌표 변환
+            // 1. 위경도 -> Unity World 좌표 변환 (고도 500m — 지형 위에서 레이 시작)
             double3 startEcef = CesiumWgs84Ellipsoid.LongitudeLatitudeHeightToEarthCenteredEarthFixed(new double3(startLon, startLat, 500.0));
-            double3 endEcef = CesiumWgs84Ellipsoid.LongitudeLatitudeHeightToEarthCenteredEarthFixed(new double3(endLon, endLat, 500.0));
+            double3 endEcef   = CesiumWgs84Ellipsoid.LongitudeLatitudeHeightToEarthCenteredEarthFixed(new double3(endLon,   endLat,   500.0));
 
-            // 2. ECEF -> 유니티 월드 좌표로 1차 변환
             Vector3 rawStart = (Vector3)(float3)_georeference.TransformEarthCenteredEarthFixedPositionToUnity(startEcef);
-            Vector3 rawEnd = (Vector3)(float3)_georeference.TransformEarthCenteredEarthFixedPositionToUnity(endEcef);
+            Vector3 rawEnd   = (Vector3)(float3)_georeference.TransformEarthCenteredEarthFixedPositionToUnity(endEcef);
 
-            // 3. 변수 선언: NavMesh 위에 안착된 최종 좌표를 담을 변수
-            Vector3 worldStart = Vector3.zero;
-            Vector3 worldEnd = Vector3.zero;
-
-            // 4. NavMesh 바닥 찾기 (SamplePosition)
-            NavMeshHit hitStart, hitEnd;
-            if (NavMesh.SamplePosition(rawStart, out hitStart, 1000f, NavMesh.AllAreas) &&
-                NavMesh.SamplePosition(rawEnd, out hitEnd, 1000f, NavMesh.AllAreas))
+            // 2. NavMesh 바닥 찾기 (SamplePosition)
+            if (!NavMesh.SamplePosition(rawStart, out NavMeshHit hitStart, 1000f, NavMesh.AllAreas) ||
+                !NavMesh.SamplePosition(rawEnd,   out NavMeshHit hitEnd,   1000f, NavMesh.AllAreas))
             {
-                worldStart = hitStart.position;
-                worldEnd = hitEnd.position;
-            }
-            else
-            {
-                UnityEngine.Debug.LogWarning($"[RoadTools] NavMesh 바닥을 찾지 못했습니다. Bake 여부와 레이어를 확인하세요.");
+                UnityEngine.Debug.LogWarning("[RoadTools] NavMesh 바닥을 찾지 못했습니다. Bake 여부와 레이어를 확인하세요.");
                 return;
             }
 
-            // 5. 이제 보정된 worldStart, worldEnd로 경로 계산
+            // 3. NavMesh 경로 계산
             NavMeshPath path = new NavMeshPath();
-            if (!NavMesh.CalculatePath(worldStart, worldEnd, NavMesh.AllAreas, path))
+            if (!NavMesh.CalculatePath(hitStart.position, hitEnd.position, NavMesh.AllAreas, path))
             {
                 UnityEngine.Debug.LogWarning($"[RoadTools] 경로를 찾을 수 없습니다: {startLat}, {startLon} -> {endLat}, {endLon}");
                 return;
@@ -190,32 +179,36 @@ namespace Rugem.RoadTools
 
             int successCount = 0;
 
-            // 3. 각 Corner 사이를 treeInterval 간격으로 보간하여 배치
+            // 4. 각 Corner 사이를 treeInterval 간격으로 보간하여 배치
             for (int i = 0; i < path.corners.Length - 1; i++)
             {
                 Vector3 cStart = path.corners[i];
-                Vector3 cEnd = path.corners[i + 1];
+                Vector3 cEnd   = path.corners[i + 1];
                 float segmentDistance = Vector3.Distance(cStart, cEnd);
-                Vector3 segmentDir = (cEnd - cStart).normalized;
+                Vector3 segmentDir    = (cEnd - cStart).normalized;
 
                 float currentDist = 0f;
                 while (currentDist <= segmentDistance)
                 {
-                    Vector3 samplePoint = cStart + (segmentDir * currentDist);
-                    Vector3 rayOrigin = samplePoint + Vector3.up * raycastHeight;
+                    Vector3 samplePoint = cStart + segmentDir * currentDist;
 
-                    // 4. 수직 하방 레이캐스트로 정확한 지면 높이 및 법선 감지
-                    if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, raycastHeight * 2f, roadLayerMask))
+                    // 지구 곡률을 고려한 로컬 up/down 방향 계산
+                    Vector3 localUp   = GetLocalUpAtUnityPos(samplePoint);
+                    Vector3 rayOrigin = samplePoint + localUp * raycastHeight;
+
+                    if (Physics.Raycast(rayOrigin, -localUp, out RaycastHit hit, raycastHeight * 2f, roadLayerMask))
                     {
                         GameObject tree = Instantiate(assetPrefab, lineParent.transform);
                         tree.name = $"Tree_{successCount}";
                         tree.transform.position = hit.point;
 
-                        // 나무는 수직을 유지하면서 도로 진행 방향을 바라봄
-                        if (segmentDir != Vector3.zero)
-                            tree.transform.rotation = Quaternion.LookRotation(segmentDir, Vector3.up);
+                        // 지구 표면 법선 기준으로 세우고 도로 진행 방향을 바라봄
+                        Vector3 forward = segmentDir != Vector3.zero
+                            ? Vector3.ProjectOnPlane(segmentDir, localUp).normalized
+                            : localUp == Vector3.up ? Vector3.forward
+                              : Vector3.ProjectOnPlane(Vector3.forward, localUp).normalized;
+                        tree.transform.rotation = Quaternion.LookRotation(forward, localUp);
 
-                        // Cesium 요구사항 적용
                         var anchor = tree.AddComponent<CesiumGlobeAnchor>();
                         anchor.detectTransformChanges = false;
 
@@ -228,16 +221,14 @@ namespace Rugem.RoadTools
                     }
 
                     currentDist += treeInterval;
-                    if (treeInterval <= 0) break; // 무한 루프 방지
+                    if (treeInterval <= 0) break;
                 }
             }
 
             if (applyStaticBatching && successCount > 0)
-            {
                 StaticBatchingUtility.Combine(lineParent);
-            }
 
-            UnityEngine.Debug.Log($"[RoadTools] NavMesh 경로 기반 {successCount}개 나무 배치 완료");
+            UnityEngine.Debug.Log($"[RoadTools] NavMesh 경로 기반 {successCount}개 나무 배치 완료 (곡률 보정 적용)");
         }
 
         // ── 점(Point) 데이터 배치 ───────────────────────────────────────────────
@@ -253,14 +244,14 @@ namespace Rugem.RoadTools
 
             if (!EnsureGeoreference()) return false;
 
-            // 1. WGS84 → ECEF → Unity 월드 좌표
+            // 1. WGS84 → ECEF → Unity 월드 좌표 (고도 raycastHeight — 지형 위 보장)
             double3 ecef = CesiumWgs84Ellipsoid.LongitudeLatitudeHeightToEarthCenteredEarthFixed(
-                new double3(longitude, latitude, 500.0));
-            Vector3 rawPos = (Vector3)(float3)_georeference.TransformEarthCenteredEarthFixedPositionToUnity(ecef);
+                new double3(longitude, latitude, (double)raycastHeight));
+            Vector3 rayOrigin = (Vector3)(float3)_georeference.TransformEarthCenteredEarthFixedPositionToUnity(ecef);
 
-            // 2. Raycast로 실제 지면 높이 감지
-            Vector3 rayOrigin = new Vector3(rawPos.x, raycastHeight, rawPos.z);
-            if (!Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, raycastHeight * 2f, roadLayerMask))
+            // 2. 지구 곡률을 고려한 로컬 down 방향으로 레이캐스트
+            Vector3 localUp = GetLocalUpAtUnityPos(rayOrigin);
+            if (!Physics.Raycast(rayOrigin, -localUp, out RaycastHit hit, raycastHeight * 2f, roadLayerMask))
             {
                 UnityEngine.Debug.LogWarning(
                     $"[RoadTools] 지면 감지 실패 - 위도: {latitude:F6}, 경도: {longitude:F6}. " +
@@ -268,10 +259,11 @@ namespace Rugem.RoadTools
                 return false;
             }
 
-            // 3. 에셋 배치
+            // 3. 에셋 배치 — 지구 표면 법선 기준으로 수직 정렬
             Transform attachTo = parent != null ? parent : this.transform;
             GameObject obj = Instantiate(assetPrefab, attachTo);
             obj.transform.position = hit.point;
+            obj.transform.rotation = Quaternion.FromToRotation(Vector3.up, localUp);
 
             var anchor = obj.AddComponent<CesiumGlobeAnchor>();
             anchor.detectTransformChanges = false;
@@ -304,6 +296,22 @@ namespace Rugem.RoadTools
         public void ClearAllTrees() => ClearAllAssets();
 
         // ── 내부 헬퍼 ───────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Unity 월드 좌표에서 Cesium 지구 곡률을 고려한 로컬 "up" 방향을 반환합니다.
+        /// ECEF 위치 벡터를 정규화하면 지구 표면 법선(중심→지표 방향)이 됩니다.
+        /// 이를 Unity 공간으로 변환하면 해당 위치의 실제 "하늘 방향"이 됩니다.
+        /// </summary>
+        private Vector3 GetLocalUpAtUnityPos(Vector3 unityPos)
+        {
+            if (!EnsureGeoreference()) return Vector3.up;
+
+            double3 ecef      = _georeference.TransformUnityPositionToEarthCenteredEarthFixed(
+                                    new double3(unityPos.x, unityPos.y, unityPos.z));
+            double3 ecefUpDir = math.normalize(ecef);
+            double3 unityUp   = _georeference.TransformEarthCenteredEarthFixedDirectionToUnity(ecefUpDir);
+            return ((Vector3)(float3)unityUp).normalized;
+        }
 
         private bool EnsureGeoreference()
         {

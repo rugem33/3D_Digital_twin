@@ -17,10 +17,10 @@ namespace Rugem.RoadTools
         [SerializeField] private string _restApiKey = "";
 
         [Tooltip("현재 위치 기준 검색 반경 (미터). 25000 = 25 km. Kakao API 최대 20 km, 초과분은 클라이언트 필터링.")]
-        [SerializeField, Range(500, 25000)] private int _searchRadius = 25000;
+        [SerializeField, Range(500, 25000)] private int _searchRadius = 2000;
 
         [Tooltip("페이지당 결과 수 (최대 15)")]
-        [SerializeField, Range(1, 15)] private int _pageSize = 15;
+        [SerializeField, Range(1, 15)] private int _pageSize = 10;
 
         [Tooltip("요청 타임아웃 (초)")]
         [SerializeField] private int _timeoutSeconds = 10;
@@ -46,9 +46,15 @@ namespace Rugem.RoadTools
         /// </summary>
         public void Search(string query, Action<List<POIData>, string> onComplete)
         {
-            if (string.IsNullOrWhiteSpace(_restApiKey))
+            Search(query, _pageSize, _searchRadius, onComplete);
+        }
+
+        public void Search(string query, int maxResults, int radiusMeters, Action<List<POIData>, string> onComplete)
+        {
+            string apiKey = KakaoApiKeyProvider.Resolve(_restApiKey);
+            if (string.IsNullOrWhiteSpace(apiKey))
             {
-                onComplete?.Invoke(null, "REST API 키가 설정되지 않았습니다.\nInspector에서 _restApiKey를 입력하세요.");
+                onComplete?.Invoke(null, "REST API 키가 설정되지 않았습니다.\nAssets/Resources/kakao_api_key.txt를 확인하세요.");
                 return;
             }
 
@@ -60,25 +66,27 @@ namespace Rugem.RoadTools
 
             double lat = _gpsService != null ? _gpsService.CurrentLatitude  : 0.0;
             double lon = _gpsService != null ? _gpsService.CurrentLongitude : 0.0;
-            StartCoroutine(SearchCoroutine(query.Trim(), lat, lon, onComplete));
+            int pageSize = Mathf.Clamp(maxResults, 1, 15);
+            int radius   = Mathf.Clamp(radiusMeters, 1, 20000);
+            StartCoroutine(SearchCoroutine(query.Trim(), lat, lon, pageSize, radius, onComplete));
         }
 
         // ── 내부 구현 ────────────────────────────────────────────────────────────
 
-        private IEnumerator SearchCoroutine(string query, double lat, double lon,
+        private IEnumerator SearchCoroutine(string query, double lat, double lon, int pageSize, int radiusMeters,
                                             Action<List<POIData>, string> onComplete)
         {
             // 위경도가 있으면 거리순 정렬, 없으면 정확도순
             // Kakao API radius 파라미터 최대값은 20000m — 초과분은 ParseDocuments에서 필터링
-            string url = $"{Endpoint}?query={UnityWebRequest.EscapeURL(query)}&size={_pageSize}";
+            string url = $"{Endpoint}?query={UnityWebRequest.EscapeURL(query)}&size={pageSize}";
             if (lat != 0.0 && lon != 0.0)
             {
-                int apiRadius = Mathf.Min(_searchRadius, 20000);
+                int apiRadius = Mathf.Min(radiusMeters, 20000);
                 url += $"&x={lon:F6}&y={lat:F6}&radius={apiRadius}&sort=distance";
             }
 
             using var req = UnityWebRequest.Get(url);
-            req.SetRequestHeader("Authorization", $"KakaoAK {_restApiKey}");
+            req.SetRequestHeader("Authorization", $"KakaoAK {KakaoApiKeyProvider.Resolve(_restApiKey)}");
             req.timeout = _timeoutSeconds;
 
             yield return req.SendWebRequest();
@@ -99,7 +107,7 @@ namespace Rugem.RoadTools
             try
             {
                 var response = JsonUtility.FromJson<KakaoResponse>(req.downloadHandler.text);
-                var results  = ParseDocuments(response, _searchRadius);
+                var results  = ParseDocuments(response, radiusMeters, pageSize);
                 onComplete?.Invoke(results, null);
                 Debug.Log($"[Kakao] '{query}' 검색 결과: {results.Count}개 (전체 {response?.meta.total_count}개)");
             }
@@ -110,7 +118,7 @@ namespace Rugem.RoadTools
             }
         }
 
-        private static List<POIData> ParseDocuments(KakaoResponse response, int maxDistanceMeters)
+        private static List<POIData> ParseDocuments(KakaoResponse response, int maxDistanceMeters, int maxResults)
         {
             var list = new List<POIData>();
             if (response?.documents == null) return list;
@@ -134,6 +142,9 @@ namespace Rugem.RoadTools
                     latitude:  docLat,
                     longitude: docLon
                 ));
+
+                if (list.Count >= maxResults)
+                    break;
             }
             return list;
         }
