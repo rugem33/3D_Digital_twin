@@ -34,10 +34,10 @@ namespace Rugem.RoadTools
         [SerializeField] private int _maxRoadGridCells = 30000;
 
         [Header("카카오 도로 경로 (선택)")]
-        [Tooltip("REST API 키를 직접 입력하면 카카오 모빌리티 API로 실제 도로 경로를 우선 사용합니다.\n" +
-                 "developers.kakao.com → 앱 → 앱 키 → REST API 키\n" +
-                 "비워두면 NavMesh 또는 도로 메쉬 경로로 폴백합니다.")]
-        [SerializeField] private string _kakaoRestApiKey = "";
+        [Tooltip("씬에 직접 저장하지 마세요. Assets/Resources/kakao_api_key.txt 에서 자동 로드됩니다.\n" +
+                 "(해당 파일을 .gitignore에 추가하여 커밋에서 제외하세요)")]
+        // API 키는 씬 파일에 직렬화하지 않음 — Resources/kakao_api_key.txt 에서 런타임 로드
+        private string _kakaoRestApiKey = "";
         [Tooltip("직접 키를 입력하지 않고 씬에 있는 KakaoDirectionsService 컴포넌트를 참조할 경우 여기에 연결합니다. (선택)")]
         [SerializeField] private KakaoDirectionsService _directionsService;
 
@@ -87,6 +87,13 @@ namespace Rugem.RoadTools
                 _gpsService = FindAnyObjectByType<GPSLocationService>();
             if (_playerController == null)
                 _playerController = FindAnyObjectByType<FirstPersonGPSController>();
+            // API 키를 Resources에서 로드 (씬 파일 직렬화 방지)
+            if (string.IsNullOrWhiteSpace(_kakaoRestApiKey))
+            {
+                var cfg = Resources.Load<TextAsset>("kakao_api_key");
+                if (cfg != null) _kakaoRestApiKey = cfg.text.Trim();
+            }
+
             // 키 직접 입력 우선 — 컴포넌트 참조 없이 자동 구성
             if (!string.IsNullOrWhiteSpace(_kakaoRestApiKey))
             {
@@ -254,7 +261,15 @@ namespace Rugem.RoadTools
 
                         if (error == null && waypoints != null && waypoints.Length >= 2)
                         {
-                            CurrentRoute = waypoints;
+                            // 현재 위치 → 카카오 경로 시작점을 직선으로 보간
+                            Vector3 playerPos = (_navAnchor != null && _navAnchor.NavTransform != null)
+                                ? _navAnchor.NavTransform.position
+                                : _gpsService.SmoothedUnityPosition;
+
+                            var fullRoute = new Vector3[waypoints.Length + 1];
+                            fullRoute[0] = playerPos;
+                            System.Array.Copy(waypoints, 0, fullRoute, 1, waypoints.Length);
+                            CurrentRoute = fullRoute;
                             OnRouteCalculated?.Invoke(destinationSnapshot, CurrentRoute);
                         }
                         else
@@ -571,9 +586,9 @@ namespace Rugem.RoadTools
 
         /// <summary>
         /// 도로 메쉬 불연속 구간 보완 — walkable 셀 주변 1칸을 팽창해 인접 세그먼트 연결.
-        /// 빈 셀의 8방향 이웃 중 walkable 셀이 있으면 그 road 표면 Y를 빌려 현재 셀 XZ와 합성합니다.
+        /// 이웃 walkable 셀이 있더라도 해당 XZ 위치에 실제 Road 레이캐스트가 성공해야만 walkable로 표시합니다.
         /// </summary>
-        private static void BridgeWalkableGaps(bool[,] walkable, Vector3[,] points, float minX, float minZ, float step)
+        private void BridgeWalkableGaps(bool[,] walkable, Vector3[,] points, float minX, float minZ, float step)
         {
             int w = walkable.GetLength(0);
             int h = walkable.GetLength(1);
@@ -585,21 +600,29 @@ namespace Rugem.RoadTools
             {
                 if (walkable[x, z]) continue;
 
-                bool filled = false;
-                for (int dx = -1; dx <= 1 && !filled; dx++)
-                for (int dz = -1; dz <= 1 && !filled; dz++)
+                // 8방향 이웃 중 walkable 셀이 있는지 확인
+                bool hasWalkableNeighbor = false;
+                float neighborY = 0f;
+                for (int dx = -1; dx <= 1 && !hasWalkableNeighbor; dx++)
+                for (int dz = -1; dz <= 1 && !hasWalkableNeighbor; dz++)
                 {
                     if (dx == 0 && dz == 0) continue;
                     int nx = x + dx, nz = z + dz;
                     if (nx < 0 || nz < 0 || nx >= w || nz >= h) continue;
                     if (!walkable[nx, nz]) continue;
+                    hasWalkableNeighbor = true;
+                    neighborY = points[nx, nz].y;
+                }
 
-                    // 이 셀의 월드 XZ + 이웃 road 표면 Y
-                    float worldX = minX + x * step;
-                    float worldZ = minZ + z * step;
-                    float roadY  = points[nx, nz].y;
-                    toFill.Add((x, z, new Vector3(worldX, roadY, worldZ)));
-                    filled = true;
+                if (!hasWalkableNeighbor) continue;
+
+                // Road 레이어 레이캐스트로 실제 도로 표면 재검증
+                float worldX = minX + x * step;
+                float worldZ = minZ + z * step;
+                Vector3 origin = new Vector3(worldX, neighborY + _roadRaycastHeight, worldZ);
+                if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, _roadRaycastHeight * 2f, _roadLayerMask))
+                {
+                    toFill.Add((x, z, hit.point));
                 }
             }
 

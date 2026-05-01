@@ -37,20 +37,25 @@ namespace Rugem.RoadTools
         [SerializeField] private float _maxRayDistance = 2000f;
         [Tooltip("건물로 인식할 레이어. 0이면 전체 레이어.")]
         [SerializeField] private LayerMask _buildingLayerMask = ~0;
+        [Tooltip("지면 높이 기준을 찾을 레이어입니다. 기본값은 Road + Land입니다.")]
+        [SerializeField] private LayerMask _groundLayerMask = (1 << 6) | (1 << 7);
 
         [Header("GPS 캐시 설정")]
         [Tooltip("GPS 양자화 해상도. 1e-4 ≈ 11m 격자. 클수록 적은 API 호출.")]
         [SerializeField] private float _gpsQuantizeScale = 1e-4f;
 
         [Header("레이블 표시 설정")]
-        [Tooltip("레이블 월드 위치를 히트 포인트에서 위로 올릴 높이 (미터)")]
-        [SerializeField] private float _labelHeightOffset = 8.0f;
+        [Tooltip("벽면에서 레이블을 카메라 쪽으로 띄울 거리 (미터). z-클리핑 방지용.")]
+        [SerializeField] private float _labelWallOffset = 0.4f;
         [Tooltip("이 거리 이상의 건물 레이블은 숨깁니다 (미터)")]
         [SerializeField] private float _labelMaxDistance = 400.0f;
+        [Tooltip("스캔에서 사라진 뒤 라벨을 유지할 시간 (초). 카메라 회전 중 깜빡임을 줄입니다.")]
+        [SerializeField] private float _labelVisibleGraceSeconds = 1.2f;
         [SerializeField, Range(10, 36)] private int _fontSize = 15;
         [SerializeField] private Color _textColor = new Color(1f, 1f, 1f, 0.92f);
         [SerializeField] private Color _bgColor   = new Color(0f, 0f, 0f, 0.55f);
         [SerializeField] private Vector2 _padding  = new Vector2(7f, 4f);
+        [SerializeField] private bool _debugLogs = false;
 
         [Header("의존성")]
         [SerializeField] private CesiumGeoreference _georeference;
@@ -61,6 +66,8 @@ namespace Rugem.RoadTools
         private readonly Dictionary<(int, int), string> _nameCache = new();
         // (latQ, lonQ) → 레이블 월드 위치
         private readonly Dictionary<(int, int), Vector3> _labelPos = new();
+        private readonly Dictionary<(int, int), float> _lastVisibleTime = new();
+        private readonly HashSet<(int, int)> _scanVisibleKeys = new();
 
         private GUIStyle _labelStyle;
         private GUIStyle _boxStyle;
@@ -93,18 +100,27 @@ namespace Rugem.RoadTools
 
         private void OnGUI()
         {
-            if (Camera.main == null) return;
+            Camera cam = Camera.main;
+            if (cam == null) return;
             EnsureStyles();
 
             foreach (var kv in _labelPos)
             {
+                if (!_lastVisibleTime.TryGetValue(kv.Key, out float lastSeen)
+                    || Time.time - lastSeen > _labelVisibleGraceSeconds)
+                    continue;
+
                 if (!_nameCache.TryGetValue(kv.Key, out string name)) continue;
                 if (string.IsNullOrEmpty(name)) continue;
 
-                Vector3 screenPos = Camera.main.WorldToScreenPoint(kv.Value);
+                Vector3 screenPos = cam.WorldToScreenPoint(kv.Value);
                 if (screenPos.z <= 0f) continue;
 
-                float dist = Vector3.Distance(Camera.main.transform.position, kv.Value);
+                Vector3 viewportPos = cam.WorldToViewportPoint(kv.Value);
+                if (viewportPos.x < 0f || viewportPos.x > 1f || viewportPos.y < 0f || viewportPos.y > 1f)
+                    continue;
+
+                float dist = Vector3.Distance(cam.transform.position, kv.Value);
                 if (dist > _labelMaxDistance) continue;
 
                 DrawLabel(name, screenPos);
@@ -118,10 +134,13 @@ namespace Rugem.RoadTools
             Camera cam = Camera.main;
             if (cam == null) yield break;
 
+            _scanVisibleKeys.Clear();
             UpdateGroundY(cam);
 
             LayerMask mask = _buildingLayerMask == 0 ? ~0 : _buildingLayerMask;
-            float groundRef = float.IsNaN(_groundY) ? cam.transform.position.y - 2f : _groundY;
+            bool hasGroundRef = !float.IsNaN(_groundY);
+            int hitCount = 0;
+            int requestedCount = 0;
 
             for (int xi = 0; xi < _gridSize; xi++)
             {
@@ -132,46 +151,98 @@ namespace Rugem.RoadTools
                     Ray ray = cam.ViewportPointToRay(new Vector3(vx, vy, 0f));
 
                     if (!Physics.Raycast(ray, out RaycastHit hit, _maxRayDistance, mask)) continue;
-                    if (hit.point.y < groundRef + _buildingMinHeight) continue;
+                    if (hasGroundRef && hit.point.y < _groundY + _buildingMinHeight) continue;
+
+                    // 지붕(법선이 local-up 방향)은 제외 — 벽면만 레이블
+                    Vector3 localUp = GetLocalUp(hit.point);
+                    if (Vector3.Dot(hit.normal, localUp) > 0.5f) continue;
+
+                    hitCount++;
 
                     (int, int) key = ToGpsKey(hit.point);
+                    _scanVisibleKeys.Add(key);
+                    _lastVisibleTime[key] = Time.time;
 
-                    if (!_labelPos.ContainsKey(key))
-                        _labelPos[key] = hit.point + Vector3.up * _labelHeightOffset;
+                    // 히트 포인트에서 벽면 법선 방향(카메라 쪽)으로 살짝 띄움
+                    _labelPos[key] = hit.point + hit.normal * _labelWallOffset;
 
                     if (_nameCache.ContainsKey(key)) continue;
+
+                    string persisted = LoadCachedBuildingName(key);
+                    if (persisted != null)
+                    {
+                        _nameCache[key] = persisted;
+                        continue;
+                    }
 
                     _nameCache[key] = null; // 요청 중 표시
                     double3 llh = UnityToLonLatHeight(hit.point);
                     StartCoroutine(FetchBuildingName(key, llh.y, llh.x));
+                    requestedCount++;
                 }
                 yield return null; // 프레임 분산
             }
+
+            PruneInactiveLabels();
+            if (_debugLogs)
+                Debug.Log($"[BuildingLabel] scan hits={hitCount}, labels={_labelPos.Count}, requests={requestedCount}, ground={(hasGroundRef ? _groundY.ToString("F1") : "none")}");
         }
 
         private void UpdateGroundY(Camera cam)
         {
-            Vector3 origin = new Vector3(cam.transform.position.x,
-                                         cam.transform.position.y + 500f,
-                                         cam.transform.position.z);
-            LayerMask mask = _buildingLayerMask == 0 ? ~0 : _buildingLayerMask;
-            if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, 2000f, mask))
+            Vector3 localUp = GetLocalUp(cam.transform.position);
+            Vector3 origin  = cam.transform.position + localUp * 500f;
+            LayerMask mask = _groundLayerMask == 0 ? ~_buildingLayerMask : _groundLayerMask;
+            if (Physics.Raycast(origin, -localUp, out RaycastHit hit, 2000f, mask))
                 _groundY = hit.point.y;
+            else
+                _groundY = float.NaN;
+        }
+
+        private Vector3 GetLocalUp(Vector3 unityPos)
+        {
+            if (_georeference == null) return Vector3.up;
+            Unity.Mathematics.double3 ecef = _georeference.TransformUnityPositionToEarthCenteredEarthFixed(
+                new Unity.Mathematics.double3(unityPos.x, unityPos.y, unityPos.z));
+            Unity.Mathematics.double3 ecefUp  = Unity.Mathematics.math.normalize(ecef);
+            Unity.Mathematics.double3 unityUp = _georeference.TransformEarthCenteredEarthFixedDirectionToUnity(ecefUp);
+            return ((Vector3)(Unity.Mathematics.float3)unityUp).normalized;
+        }
+
+        private void PruneInactiveLabels()
+        {
+            float expireBefore = Time.time - _labelVisibleGraceSeconds;
+            var removeKeys = new List<(int, int)>();
+
+            foreach (var kv in _lastVisibleTime)
+            {
+                if (kv.Value < expireBefore)
+                    removeKeys.Add(kv.Key);
+            }
+
+            foreach (var key in removeKeys)
+            {
+                _lastVisibleTime.Remove(key);
+                _labelPos.Remove(key);
+            }
         }
 
         // ── Kakao coord2address API ───────────────────────────────────────────────
 
         private IEnumerator FetchBuildingName((int, int) key, double lat, double lon)
         {
-            if (string.IsNullOrWhiteSpace(_restApiKey))
+            string apiKey = KakaoApiKeyProvider.Resolve(_restApiKey);
+            if (string.IsNullOrWhiteSpace(apiKey))
             {
                 _nameCache[key] = "";
+                if (_debugLogs)
+                    Debug.LogWarning("[BuildingLabel] Kakao REST API key missing. Check Assets/Resources/kakao_api_key.txt.");
                 yield break;
             }
 
             string url = $"{ApiEndpoint}?x={lon:F6}&y={lat:F6}";
             using var req = UnityWebRequest.Get(url);
-            req.SetRequestHeader("Authorization", $"KakaoAK {_restApiKey}");
+            req.SetRequestHeader("Authorization", $"KakaoAK {apiKey}");
             req.timeout = _timeoutSeconds;
 
             yield return req.SendWebRequest();
@@ -179,6 +250,8 @@ namespace Rugem.RoadTools
             if (req.result != UnityWebRequest.Result.Success)
             {
                 _nameCache[key] = "";
+                if (_debugLogs)
+                    Debug.LogWarning($"[BuildingLabel] Kakao coord2address failed ({req.responseCode}): {req.error}");
                 yield break;
             }
 
@@ -189,11 +262,31 @@ namespace Rugem.RoadTools
                     ? resp.documents[0].road_address?.building_name ?? ""
                     : "";
                 _nameCache[key] = building;
+                SaveCachedBuildingName(key, building);
+                if (_debugLogs)
+                    Debug.Log($"[BuildingLabel] fetched '{building}' at {lat:F6},{lon:F6}");
             }
             catch
             {
                 _nameCache[key] = "";
+                SaveCachedBuildingName(key, "");
+                if (_debugLogs)
+                    Debug.LogWarning("[BuildingLabel] Kakao coord2address response parse failed.");
             }
+        }
+
+        private static string CacheKey((int, int) key) => $"BuildingLabelCache_v2_{key.Item1}_{key.Item2}";
+
+        private static string LoadCachedBuildingName((int, int) key)
+        {
+            string prefKey = CacheKey(key);
+            return PlayerPrefs.HasKey(prefKey) ? PlayerPrefs.GetString(prefKey, "") : null;
+        }
+
+        private static void SaveCachedBuildingName((int, int) key, string name)
+        {
+            PlayerPrefs.SetString(CacheKey(key), name ?? "");
+            PlayerPrefs.Save();
         }
 
         // ── 좌표 변환 ────────────────────────────────────────────────────────────

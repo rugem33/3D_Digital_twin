@@ -79,6 +79,10 @@ crashlytics-build.properties
 # TestRunner generated files
 InitTestScene*.unity*
 
+# API keys — do not commit
+/[Aa]ssets/Resources/kakao_api_key.txt
+/[Aa]ssets/Resources/kakao_api_key.txt.meta
+
 # Addressables default ignores, before user customizations
 /ServerData
 /[Aa]ssets/StreamingAssets/aa*

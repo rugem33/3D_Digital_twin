@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.Rendering;
 
 namespace Rugem.RoadTools
 {
@@ -28,6 +29,8 @@ namespace Rugem.RoadTools
         [SerializeField] private float _lineWidth       = 4.0f;
         [Tooltip("바닥면 위 선 높이 오프셋 (미터) — Z파이팅 방지 + 가시성 확보")]
         [SerializeField] private float _groundOffset    = 0.3f;
+        [Tooltip("Final route line vertices are snapped this far above the Land terrain surface to prevent z-fighting.")]
+        [SerializeField] private float _terrainSnapOffset = 0.05f;
 
         [Header("도로 NavMesh · 레이어")]
         [Tooltip("도로 메쉬 레이어. 설정 시 일반 지형보다 우선해 도로면 Y를 획득합니다.\n" +
@@ -41,8 +44,10 @@ namespace Rugem.RoadTools
         [SerializeField] private float _terrainSampleStep = 5f;
         [Tooltip("각 점을 NavMesh에 스냅할 탐색 반경 (미터)")]
         [SerializeField] private float _navMeshSnapRadius = 30f;
-        [Tooltip("Camera.main 기준 레이캐스트 상단 오프셋 (미터). 권장: 50~200")]
-        [SerializeField] private float _groundSearchRange = 100f;
+        [Tooltip("표면 Y 감지 레이캐스트 시작 오프셋 (미터). Kakao 웨이포인트 Y가 해수면일 수 있으므로\n" +
+                 "Camera.main.y 와 waypoint.y 중 높은 값의 위에서 이 높이만큼 올려 시작합니다.\n" +
+                 "지역 최고 지형보다 크게 설정하세요. 권장: 500")]
+        [SerializeField] private float _raycastAltitude = 500f;
         [Tooltip("구간당 최대 보간 점 수 — 긴 직선 구간에서 성능 보호")]
         [SerializeField] private int _maxSubdivisionsPerSegment = 60;
 
@@ -111,7 +116,7 @@ namespace Rugem.RoadTools
                 return;
             }
 
-            _fullRoute = BuildRoadRoute(waypoints);
+            _fullRoute = SnapRouteVerticesToTerrain(BuildRoadRoute(waypoints));
             DrawLine(_fullRoute);
 
             if (_destinationMarker == null)
@@ -241,23 +246,29 @@ namespace Rugem.RoadTools
         /// </summary>
         private Vector3 ProjectToRoadSurface(Vector3 pos)
         {
+            if (TrySampleTerrainDownward(pos, out Vector3 landPt))
+                return landPt;
+
             if (_roadLayerMask != 0 && TrySampleDownward(pos, _roadLayerMask, out Vector3 roadPt))
                 return roadPt;
-            return SampleTerrainDownward(pos);
+
+            return FallbackAboveCamera(pos);
         }
 
         /// <summary>
-        /// 지정 레이어 마스크로 카메라 높이 기준 하방 Raycast.
-        /// 성공 시 hit.point.y + _groundOffset 위치를 반환합니다.
+        /// 지정 레이어 마스크로 하방 Raycast.
+        /// 시작점: max(Camera.main.y, pos.y) + _raycastAltitude
+        /// 사거리: _raycastAltitude × 2  → Kakao 웨이포인트 Y가 해수면(0)이어도 지형 표면을 안정적으로 감지.
         /// </summary>
         private bool TrySampleDownward(Vector3 pos, LayerMask mask, out Vector3 result)
         {
+            float   raycastAltitude = Mathf.Max(_raycastAltitude, 500f);
             float   camY   = Camera.main != null ? Camera.main.transform.position.y : pos.y;
-            float   origY  = camY + _groundSearchRange;
-            float   maxD   = origY - (pos.y - _groundSearchRange) + 50f;
+            float   baseY  = Mathf.Max(camY, pos.y);
+            float   origY  = baseY + raycastAltitude;
             Vector3 origin = new Vector3(pos.x, origY, pos.z);
 
-            if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, maxD, mask))
+            if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, raycastAltitude * 2f, mask))
             {
                 result = new Vector3(pos.x, hit.point.y + _groundOffset, pos.z);
                 return true;
@@ -267,19 +278,64 @@ namespace Rugem.RoadTools
         }
 
         /// <summary>
-        /// _terrainLayerMask(또는 전체)로 하방 Raycast. 실패 시 카메라 지면 Y 폴백.
-        ///
-        /// Kakao API 웨이포인트는 고도 없이 변환되어 pos.y가 실제 지형 Y와 크게 다를 수 있습니다.
-        /// Camera.main.y (GPS+Cesium으로 보정된 높이)를 기준으로 레이를 쏘므로
-        /// pos.y 오차에 관계없이 지형 표면을 안정적으로 감지합니다.
+        /// _terrainLayerMask(또는 전체)로 하방 Raycast.
+        /// 실패 시 Camera.main.y + _groundOffset 폴백 (지하로 내려가지 않도록 camY 기준 사용).
         /// </summary>
         private Vector3 SampleTerrainDownward(Vector3 pos)
         {
-            LayerMask mask = _terrainLayerMask == 0 ? ~0 : _terrainLayerMask;
-            if (TrySampleDownward(pos, mask, out Vector3 result))
+            if (TrySampleTerrainDownward(pos, out Vector3 result))
                 return result;
+            return FallbackAboveCamera(pos);
+        }
+
+        private bool TrySampleTerrainDownward(Vector3 pos, out Vector3 result)
+        {
+            LayerMask mask = _terrainLayerMask == 0 ? ~0 : _terrainLayerMask;
+            return TrySampleDownward(pos, mask, out result);
+        }
+
+        private Vector3[] SnapRouteVerticesToTerrain(Vector3[] route)
+        {
+            if (route == null || route.Length == 0)
+                return route;
+
+            var snapped = new Vector3[route.Length];
+            for (int i = 0; i < route.Length; i++)
+                snapped[i] = SnapRouteVertexToTerrain(route[i]);
+            return snapped;
+        }
+
+        private Vector3 SnapRouteVertexToTerrain(Vector3 pos)
+        {
+            LayerMask mask = _terrainLayerMask == 0 ? ~0 : _terrainLayerMask;
+            if (TrySampleTerrainSurfaceDownward(pos, mask, out Vector3 terrainPt))
+                return terrainPt;
+
+            return pos;
+        }
+
+        private bool TrySampleTerrainSurfaceDownward(Vector3 pos, LayerMask mask, out Vector3 result)
+        {
+            float   raycastAltitude = Mathf.Max(_raycastAltitude, 500f);
+            float   camY   = Camera.main != null ? Camera.main.transform.position.y : pos.y;
+            float   baseY  = Mathf.Max(camY, pos.y);
+            float   origY  = baseY + raycastAltitude;
+            Vector3 origin = new Vector3(pos.x, origY, pos.z);
+
+            if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, raycastAltitude * 2f, mask))
+            {
+                result = new Vector3(pos.x, hit.point.y + _terrainSnapOffset, pos.z);
+                return true;
+            }
+
+            result = default;
+            return false;
+        }
+
+        private Vector3 FallbackAboveCamera(Vector3 pos)
+        {
             float camY = Camera.main != null ? Camera.main.transform.position.y : pos.y;
-            return new Vector3(pos.x, camY - 2f + _groundOffset, pos.z);
+            return new Vector3(pos.x, camY + _groundOffset, pos.z);
         }
 
         /// <summary>
@@ -287,14 +343,12 @@ namespace Rugem.RoadTools
         /// </summary>
         private Vector3 SampleGroundBelowCamera(Vector3 cameraPos, float routeRefY)
         {
-            // 도로 메쉬 레이어 우선
+            LayerMask mask = _terrainLayerMask == 0 ? ~0 : _terrainLayerMask;
+            if (TrySampleDownward(cameraPos, mask, out Vector3 terrainPt))
+                return terrainPt;
+
             if (_roadLayerMask != 0 && TrySampleDownward(cameraPos, _roadLayerMask, out Vector3 roadPt))
                 return roadPt;
-
-            LayerMask mask   = _terrainLayerMask == 0 ? ~0 : _terrainLayerMask;
-            Vector3   origin = new Vector3(cameraPos.x, cameraPos.y + 100f, cameraPos.z);
-            if (Physics.Raycast(origin, Vector3.down, out RaycastHit hit, 1000f, mask))
-                return new Vector3(cameraPos.x, hit.point.y + _groundOffset, cameraPos.z);
 
             return new Vector3(cameraPos.x, routeRefY, cameraPos.z);
         }
@@ -325,6 +379,10 @@ namespace Rugem.RoadTools
             _line.startColor    = _routeStartColor;
             _line.endColor      = _routeEndColor;
             _line.useWorldSpace = true;
+            _line.numCornerVertices = 4;
+            _line.numCapVertices    = 4;
+            _line.shadowCastingMode = ShadowCastingMode.Off;
+            _line.receiveShadows    = false;
             _line.enabled       = false;
 
             if (_routeMaterialOverride != null)
@@ -382,8 +440,9 @@ namespace Rugem.RoadTools
                 _line.enabled = false;
                 return;
             }
-            _line.positionCount = projected.Length;
-            _line.SetPositions(projected);
+            Vector3[] snapped = SnapRouteVerticesToTerrain(projected);
+            _line.positionCount = snapped.Length;
+            _line.SetPositions(snapped);
             _line.enabled = true;
         }
 

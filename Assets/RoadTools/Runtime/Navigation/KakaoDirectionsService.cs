@@ -46,7 +46,8 @@ namespace Rugem.RoadTools
                                   double destLat,   double destLon,
                                   Action<Vector3[], string> onComplete)
         {
-            if (string.IsNullOrWhiteSpace(_restApiKey))
+            string apiKey = KakaoApiKeyProvider.Resolve(_restApiKey);
+            if (string.IsNullOrWhiteSpace(apiKey))
             {
                 onComplete?.Invoke(null, "REST API 키가 설정되지 않았습니다. Inspector에서 _restApiKey를 입력하세요.");
                 return;
@@ -66,7 +67,7 @@ namespace Rugem.RoadTools
                          $"&priority=DISTANCE";
 
             using var req = UnityWebRequest.Get(url);
-            req.SetRequestHeader("Authorization", $"KakaoAK {_restApiKey}");
+            req.SetRequestHeader("Authorization", $"KakaoAK {KakaoApiKeyProvider.Resolve(_restApiKey)}");
             req.timeout = _timeoutSeconds;
 
             yield return req.SendWebRequest();
