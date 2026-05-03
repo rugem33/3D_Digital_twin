@@ -43,6 +43,10 @@ namespace Rugem.RoadTools
         [SerializeField] private float _rotationLerpSpeed = 10f;
         [Tooltip("ON: 자이로 없는 기기에서 컴퍼스(Y축)만 사용 / OFF: 자동 감지")]
         [SerializeField] private bool _forceCompassOnly = false;
+        [Tooltip("Use compass true heading first so the phone's real facing direction matches the world/minimap direction.")]
+        [SerializeField] private bool _preferCompassHeading = true;
+        [Tooltip("Minimum horizontal heading strength required before the app accepts/recalibrates phone direction.")]
+        [SerializeField, Range(0.1f, 0.95f)] private float _uprightHeadingMinHorizontal = 0.45f;
         [Tooltip("자이로 기준 yaw를 현재 카메라 yaw에 맞춰 시작합니다.")]
         [SerializeField] private bool _autoCalibrateGyroYaw = true;
 
@@ -67,6 +71,7 @@ namespace Rugem.RoadTools
 
         private Quaternion _targetRotation;
         private bool _gyroAvailable;
+        private bool _compassEnabled;
         private bool _gyroYawCalibrated;
         private float _gyroYawOffset;
         private ScreenOrientation _lastScreenOrientation;
@@ -185,6 +190,8 @@ namespace Rugem.RoadTools
         {
             if (_gyroAvailable && AttitudeSensor.current != null)
                 InputSystem.DisableDevice(AttitudeSensor.current);
+            if (_compassEnabled)
+                Input.compass.enabled = false;
 
             if (_gpsService != null)
                 _gpsService.OnRawPositionUpdated -= OnGPSPositionUpdated;
@@ -200,6 +207,9 @@ namespace Rugem.RoadTools
 
         private void InitializeSensors()
         {
+            Input.compass.enabled = true;
+            _compassEnabled = Input.compass.enabled;
+
             if (!_forceCompassOnly && AttitudeSensor.current != null)
             {
                 InputSystem.EnableDevice(AttitudeSensor.current);
@@ -247,6 +257,7 @@ namespace Rugem.RoadTools
 
             GUI.Label(new Rect(buttonRect.x, buttonRect.y + btnSize * 0.05f, btnSize, btnSize * 0.58f), icon, _btnIconStyle);
             GUI.Label(new Rect(buttonRect.x, buttonRect.y + btnSize * 0.60f, btnSize, btnSize * 0.32f), label, _btnLabelStyle);
+
         }
 
         private void EnsureButtonStyles()
@@ -354,11 +365,20 @@ namespace Rugem.RoadTools
             switch (_rotationMode)
             {
                 case RotationMode.Gyro:
-                    if (_gyroAvailable && AttitudeSensor.current != null)
+                    if (TryGetCompassYawRotation(out Quaternion compassRotation))
                     {
-                        _targetRotation = GetCalibratedGyroRotation(AttitudeSensor.current.attitude.ReadValue());
+                        _targetRotation = compassRotation;
                         transform.rotation = Quaternion.Slerp(
                             transform.rotation, _targetRotation, Time.deltaTime * _rotationLerpSpeed);
+                    }
+                    else if (_gyroAvailable && AttitudeSensor.current != null)
+                    {
+                        if (TryGetCalibratedGyroRotation(AttitudeSensor.current.attitude.ReadValue(), out Quaternion gyroRotation))
+                        {
+                            _targetRotation = gyroRotation;
+                            transform.rotation = Quaternion.Slerp(
+                                transform.rotation, _targetRotation, Time.deltaTime * _rotationLerpSpeed);
+                        }
                     }
                     break;
 
@@ -405,10 +425,15 @@ namespace Rugem.RoadTools
             _lastScreenOrientation = Screen.orientation;
         }
 
-        private Quaternion GetCalibratedGyroRotation(Quaternion attitude)
+        private bool TryGetCalibratedGyroRotation(Quaternion attitude, out Quaternion rotation)
         {
+            rotation = transform.rotation;
             // 오른손 → 왼손 좌표계: Z·W 부호 반전
-            Quaternion gyroRotation = GyroToWorldRotation(attitude, Screen.orientation);
+            if (!TryExtractHorizontalHeading(GyroToWorldRotation(attitude, Screen.orientation), out Quaternion gyroRotation))
+            {
+                _gyroYawCalibrated = false;
+                return false;
+            }
 
             if (_lastScreenOrientation != Screen.orientation)
             {
@@ -422,7 +447,77 @@ namespace Rugem.RoadTools
                 _gyroYawCalibrated = true;
             }
 
-            return Quaternion.Euler(0f, _gyroYawOffset, 0f) * gyroRotation;
+            rotation = Quaternion.Euler(0f, _gyroYawOffset, 0f) * gyroRotation;
+            return true;
+        }
+
+        private bool TryGetCompassYawRotation(out Quaternion rotation)
+        {
+            rotation = Quaternion.identity;
+            if (!_preferCompassHeading || !_compassEnabled || Input.compass.timestamp <= 0.0)
+                return false;
+            if (!IsPhoneUprightForHeading())
+                return false;
+
+            float heading = Input.compass.trueHeading;
+            if (heading < 0f || float.IsNaN(heading))
+                heading = Input.compass.magneticHeading;
+            if (heading < 0f || float.IsNaN(heading))
+                return false;
+
+            float northYaw = TryGetWorldNorthYaw(out float worldNorthYaw) ? worldNorthYaw : 0f;
+            rotation = Quaternion.Euler(0f, northYaw + heading, 0f);
+            return true;
+        }
+
+        private bool IsPhoneUprightForHeading()
+        {
+            if (!_gyroAvailable || AttitudeSensor.current == null)
+                return true;
+
+            Quaternion attitude = AttitudeSensor.current.attitude.ReadValue();
+            return HasStableHorizontalHeading(GyroToWorldRotation(attitude, Screen.orientation));
+        }
+
+        private bool TryGetWorldNorthYaw(out float yaw)
+        {
+            yaw = 0f;
+            if (_gpsService == null)
+                return false;
+
+            double lat = _gpsService.CurrentLatitude;
+            double lon = _gpsService.CurrentLongitude;
+            if (System.Math.Abs(lat) < 0.000001 && System.Math.Abs(lon) < 0.000001)
+                return false;
+
+            Vector3 here = _gpsService.ConvertToUnityPosition(lat, lon, _gpsService.CurrentAltitude);
+            Vector3 north = _gpsService.ConvertToUnityPosition(lat + 0.00001, lon, _gpsService.CurrentAltitude);
+            Vector3 northFlat = north - here;
+            northFlat.y = 0f;
+            if (northFlat.sqrMagnitude < 0.0001f)
+                return false;
+
+            yaw = Quaternion.LookRotation(northFlat.normalized, Vector3.up).eulerAngles.y;
+            return true;
+        }
+
+        private bool TryExtractHorizontalHeading(Quaternion rotation, out Quaternion heading)
+        {
+            heading = Quaternion.identity;
+            Vector3 forward = rotation * Vector3.forward;
+            forward.y = 0f;
+            if (forward.magnitude < _uprightHeadingMinHorizontal)
+                return false;
+
+            heading = Quaternion.LookRotation(forward.normalized, Vector3.up);
+            return true;
+        }
+
+        private bool HasStableHorizontalHeading(Quaternion rotation)
+        {
+            Vector3 forward = rotation * Vector3.forward;
+            forward.y = 0f;
+            return forward.magnitude >= _uprightHeadingMinHorizontal;
         }
 
         private static Quaternion GyroToWorldRotation(Quaternion attitude, ScreenOrientation orientation)

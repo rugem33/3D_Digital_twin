@@ -172,7 +172,7 @@ namespace Rugem.RoadTools
             Matrix4x4 savedMatrix = GUI.matrix;
             if (_followTarget != null && _arrowTex != null)
             {
-                float yaw     = _followTarget.eulerAngles.y;
+                float yaw     = GetHorizontalYaw(_followTarget);
                 float cx      = x + mapSize * 0.5f;
                 float cy      = y + mapSize * 0.5f;
                 float arrowSz = mapSize * 0.14f;
@@ -200,6 +200,16 @@ namespace Rugem.RoadTools
         }
 
         // ── 텍스처 생성 ──────────────────────────────────────────────────────
+
+        private static float GetHorizontalYaw(Transform target)
+        {
+            Vector3 forward = target.forward;
+            forward.y = 0f;
+            if (forward.sqrMagnitude < 0.0001f)
+                return target.eulerAngles.y;
+
+            return Quaternion.LookRotation(forward.normalized, Vector3.up).eulerAngles.y;
+        }
 
         private void RebuildFrameTextures(int size)
         {

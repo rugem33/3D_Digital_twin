@@ -16,6 +16,7 @@ namespace Rugem.RoadTools
         [Header("UI 설정")]
         [SerializeField, Range(0.4f, 0.85f)] private float _searchPanelHeightRatio = 0.65f;
         [SerializeField] private float _arrivedDisplayDuration = 3.5f;
+        [SerializeField] private float _routeGuideLookAheadMeters = 18f;
 
         // ── 내부 상태 ─────────────────────────────────────────────────────────
         private enum NavUIState { None, SearchOpen, MapOverview, Navigating, Arrived }
@@ -64,6 +65,9 @@ namespace Rugem.RoadTools
         private GUIStyle _styleResultSub;
         private GUIStyle _styleChipLabel;
         private GUIStyle _styleResultAddr;
+        private GUIStyle _styleGuideIcon;
+        private GUIStyle _styleGuideText;
+        private GUIStyle _styleGuideSub;
         private GUIStyle _styleRoundedBase;
         private bool     _stylesReady;
         private int      _styleScreenW, _styleScreenH;
@@ -493,6 +497,7 @@ namespace Rugem.RoadTools
         private void DrawNavigationBar()
         {
             float margin = Mathf.Clamp(Screen.width * 0.035f, 12f, 26f);
+            DrawRouteDirectionGuide(margin);
             float cardH  = Mathf.Clamp(Screen.height * 0.22f, 150f, 198f);
             float cardY  = Screen.height - cardH - margin;
             float cardW  = Screen.width - margin * 2f;
@@ -537,6 +542,156 @@ namespace Rugem.RoadTools
         }
 
         // ── Arrived — 도착 알림 카드 ─────────────────────────────────────────
+
+        private void DrawRouteDirectionGuide(float margin)
+        {
+            if (!TryGetRouteDirectionGuide(out string icon, out string guide, out string sub))
+                return;
+
+            float guideW = Mathf.Min(Screen.width - margin * 2f, Mathf.Clamp(Screen.width * 0.54f, 260f, 440f));
+            float guideH = Mathf.Clamp(Screen.height * 0.105f, 74f, 104f);
+            float guideX = (Screen.width - guideW) * 0.5f;
+            float guideY = margin;
+            var rect = new Rect(guideX, guideY, guideW, guideH);
+
+            DrawDropShadow(rect);
+            DrawCard(rect, new Color(0.08f, 0.12f, 0.18f, 0.94f));
+
+            float iconW = guideH * 0.82f;
+            GUI.Label(new Rect(guideX + margin * 0.35f, guideY, iconW, guideH), icon, _styleGuideIcon);
+
+            float textX = guideX + iconW + margin * 0.65f;
+            float textW = guideW - iconW - margin;
+            GUI.Label(new Rect(textX, guideY + guideH * 0.14f, textW, guideH * 0.46f), guide, _styleGuideText);
+            GUI.Label(new Rect(textX, guideY + guideH * 0.55f, textW, guideH * 0.32f), sub, _styleGuideSub);
+        }
+
+        private bool TryGetRouteDirectionGuide(out string icon, out string guide, out string sub)
+        {
+            icon = "↑";
+            guide = "경로를 따라 직진";
+            sub = "";
+
+            Vector3[] route = _navService?.CurrentRoute;
+            if (route == null || route.Length < 2)
+                return false;
+
+            Vector3 player = GetNavigationPosition();
+            if (!TryGetLookAheadRouteTarget(route, player, Mathf.Max(3f, _routeGuideLookAheadMeters), out Vector3 target, out float remainingToTarget))
+                return false;
+
+            Vector3 toTarget = target - player;
+            toTarget.y = 0f;
+            if (toTarget.sqrMagnitude < 0.01f)
+                return false;
+
+            Vector3 forward = Camera.main != null ? Camera.main.transform.forward : transform.forward;
+            forward.y = 0f;
+            if (forward.sqrMagnitude < 0.01f)
+                forward = Vector3.forward;
+
+            float angle = Vector3.SignedAngle(forward.normalized, toTarget.normalized, Vector3.up);
+            float absAngle = Mathf.Abs(angle);
+
+            if (absAngle < 20f)
+            {
+                icon = "↑";
+                guide = "경로를 따라 직진";
+            }
+            else if (absAngle < 65f)
+            {
+                icon = angle < 0f ? "↰" : "↱";
+                guide = angle < 0f ? "왼쪽 방향으로 이동" : "오른쪽 방향으로 이동";
+            }
+            else if (absAngle < 140f)
+            {
+                icon = angle < 0f ? "←" : "→";
+                guide = angle < 0f ? "왼쪽으로 크게 이동" : "오른쪽으로 크게 이동";
+            }
+            else
+            {
+                icon = "↺";
+                guide = "뒤쪽 방향으로 이동";
+            }
+
+            sub = $"{FormatDistance(remainingToTarget)} 앞 경로";
+            return true;
+        }
+
+        private Vector3 GetNavigationPosition()
+        {
+            if (_navAnchor != null && _navAnchor.NavTransform != null)
+                return _navAnchor.NavTransform.position;
+            if (Camera.main != null)
+                return Camera.main.transform.position;
+            return _gpsService != null ? _gpsService.SmoothedUnityPosition : Vector3.zero;
+        }
+
+        private static bool TryGetLookAheadRouteTarget(Vector3[] route, Vector3 player, float lookAhead, out Vector3 target, out float distanceToTarget)
+        {
+            target = default;
+            distanceToTarget = 0f;
+            if (route == null || route.Length < 2)
+                return false;
+
+            Vector3 playerFlat = new Vector3(player.x, 0f, player.z);
+            int nearestSegment = 0;
+            float nearestT = 0f;
+            float nearestDistSq = float.MaxValue;
+
+            for (int i = 0; i < route.Length - 1; i++)
+            {
+                Vector3 a = new Vector3(route[i].x, 0f, route[i].z);
+                Vector3 b = new Vector3(route[i + 1].x, 0f, route[i + 1].z);
+                Vector3 ab = b - a;
+                float abLenSq = ab.sqrMagnitude;
+                if (abLenSq < 0.001f)
+                    continue;
+
+                float t = Mathf.Clamp01(Vector3.Dot(playerFlat - a, ab) / abLenSq);
+                Vector3 p = a + ab * t;
+                float dSq = (playerFlat - p).sqrMagnitude;
+                if (dSq < nearestDistSq)
+                {
+                    nearestDistSq = dSq;
+                    nearestSegment = i;
+                    nearestT = t;
+                }
+            }
+
+            Vector3 segStart = route[nearestSegment];
+            Vector3 segEnd = route[nearestSegment + 1];
+            Vector3 closest = Vector3.Lerp(segStart, segEnd, nearestT);
+            closest.y = player.y;
+
+            float remaining = lookAhead;
+            Vector3 cursor = closest;
+            for (int i = nearestSegment; i < route.Length - 1; i++)
+            {
+                Vector3 next = route[i + 1];
+                Vector3 delta = new Vector3(next.x - cursor.x, 0f, next.z - cursor.z);
+                float len = delta.magnitude;
+                if (len < 0.001f)
+                {
+                    cursor = next;
+                    continue;
+                }
+
+                if (remaining <= len)
+                {
+                    target = Vector3.Lerp(cursor, next, remaining / len);
+                    distanceToTarget = lookAhead;
+                    return true;
+                }
+
+                remaining -= len;
+                cursor = next;
+            }
+
+            target = route[^1];
+            distanceToTarget = Mathf.Max(0f, lookAhead - remaining);
+            return true;
+        }
 
         private void DrawArrivedOverlay()
         {
@@ -959,6 +1114,33 @@ namespace Rugem.RoadTools
                 fontSize = fsS, alignment = TextAnchor.UpperLeft,
                 wordWrap = false, clipping = TextClipping.Clip,
                 normal = { textColor = C_TextSub },
+            };
+
+            _styleGuideIcon = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = Mathf.RoundToInt(Mathf.Clamp(Screen.height * 0.064f, 42f, 62f)),
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                normal = { textColor = Color.white },
+            };
+
+            _styleGuideText = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = Mathf.RoundToInt(Mathf.Clamp(Screen.height * 0.026f, 18f, 28f)),
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.LowerLeft,
+                wordWrap = false,
+                clipping = TextClipping.Clip,
+                normal = { textColor = Color.white },
+            };
+
+            _styleGuideSub = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = Mathf.RoundToInt(Mathf.Clamp(Screen.height * 0.018f, 12f, 18f)),
+                alignment = TextAnchor.UpperLeft,
+                wordWrap = false,
+                clipping = TextClipping.Clip,
+                normal = { textColor = new Color(0.74f, 0.86f, 1f, 1f) },
             };
         }
 
