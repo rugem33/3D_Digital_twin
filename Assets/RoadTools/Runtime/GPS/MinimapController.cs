@@ -4,74 +4,56 @@ using UnityEngine;
 namespace Rugem.RoadTools
 {
     /// <summary>
-    /// 탑뷰 미니맵을 RenderTexture로 렌더링하여 화면 우측 상단에 표시합니다.
-    /// 직교 카메라가 플레이어 위 일정 높이에서 따라다니며 지형·건물을 렌더링합니다.
+    /// 탑뷰 미니맵을 RenderTexture로 렌더링. 원형 마스크 + 드롭 쉐도우 적용.
     /// </summary>
     public class MinimapController : MonoBehaviour
     {
         [Header("추적 대상")]
-        [Tooltip("미니맵이 따라갈 Transform. 비어있으면 FirstPersonGPSController를 자동 탐색합니다.")]
         [SerializeField] private Transform _followTarget;
 
         [Header("미니맵 카메라")]
-        [Tooltip("플레이어 위 카메라 높이 오프셋 (미터)")]
-        [SerializeField] private float _cameraHeight = 400f;
-        [Tooltip("직교 카메라 크기 — 클수록 넓은 범위 표시 (미터 단위 반경)")]
+        [SerializeField] private float _cameraHeight    = 400f;
         [SerializeField] private float _orthographicSize = 80f;
 
         [Header("미니맵 UI")]
-        [Tooltip("RenderTexture 해상도 (높을수록 선명, 성능 비용 증가)")]
-        [SerializeField] private int _textureSize = 256;
-        [Tooltip("화면 높이 대비 미니맵 크기 비율")]
+        [SerializeField] private int   _textureSize  = 256;
         [SerializeField, Range(0.1f, 0.4f)] private float _mapSizeRatio = 0.22f;
-        [Tooltip("플레이어 방향 마커 색상")]
-        [SerializeField] private Color _markerColor = new Color(1f, 0.25f, 0.25f, 1f);
-        [Tooltip("미니맵 테두리 색상")]
-        [SerializeField] private Color _borderColor = new Color(0f, 0f, 0f, 0.8f);
+        [SerializeField] private Color _markerColor  = new Color(0.13f, 0.59f, 0.95f, 1f);
 
-        // FirstPersonGPSController의 OnGUI가 버튼 Y 위치 계산에 사용
         internal const float MapSizeRatioConst = 0.22f;
 
-        private Camera _minimapCam;
-        private RenderTexture _rt;
-        private Texture2D _arrowTex;
-        private GUIStyle _northStyle;
+        private Camera            _minimapCam;
+        private RenderTexture     _rt;
+        private Texture2D         _arrowTex;
+        private Texture2D         _circleFrameTex;  // 원형 클리핑 마스크 (테두리 바깥 불투명)
+        private Texture2D         _circleMaskTex;   // 원 내부만 흰색 (마커 위 적용용)
+        private GUIStyle          _northStyle;
         private CesiumCameraManager _cameraManager;
-        private bool _registeredWithCameraManager;
+        private bool              _registeredWithCameraManager;
+        private int               _lastFrameTexSize; // 프레임 텍스처 재생성 감지용
 
-        // ── 오버뷰 모드 ───────────────────────────────────────────────────────
+        // ── 오버뷰 모드 ──────────────────────────────────────────────────────
         private bool  _overviewMode;
         private float _savedOrthoSize;
 
-        /// <summary>오버뷰 패널에 표시할 RenderTexture</summary>
         public RenderTexture OverviewTexture   => _rt;
-        /// <summary>현재 카메라 직교 크기 (월드 미터 단위 반경)</summary>
         public float         CurrentOrthoSize  => _minimapCam != null ? _minimapCam.orthographicSize : _orthographicSize;
-        /// <summary>현재 카메라 월드 위치 (XZ 평면 기준으로 WorldToMapPos에서 사용)</summary>
         public Vector3       CurrentCamPosition => _minimapCam != null ? _minimapCam.transform.position : Vector3.zero;
 
-        /// <summary>
-        /// 오버뷰 모드 진입 — 카메라를 playerWorldPos↔destWorldPos 중점으로 이동하고
-        /// 양쪽이 모두 보이도록 직교 크기를 조정합니다.
-        /// </summary>
         public void EnterOverviewMode(Vector3 playerWorldPos, Vector3 destWorldPos)
         {
             if (_minimapCam == null) return;
-            if (!_overviewMode)
-                _savedOrthoSize = _minimapCam.orthographicSize;
-
+            if (!_overviewMode) _savedOrthoSize = _minimapCam.orthographicSize;
             float midX = (playerWorldPos.x + destWorldPos.x) * 0.5f;
             float midZ = (playerWorldPos.z + destWorldPos.z) * 0.5f;
             float dx   = Mathf.Abs(destWorldPos.x - playerWorldPos.x) * 0.5f;
             float dz   = Mathf.Abs(destWorldPos.z - playerWorldPos.z) * 0.5f;
-            float size = Mathf.Max(dx, dz, 50f) * 1.4f; // 40% 여백
-
+            float size = Mathf.Max(dx, dz, 50f) * 1.4f;
             _minimapCam.transform.position = new Vector3(midX, _minimapCam.transform.position.y, midZ);
             _minimapCam.orthographicSize   = size;
             _overviewMode = true;
         }
 
-        /// <summary>오버뷰 모드 종료 — 카메라 직교 크기 복원, 미니맵 일반 표시 재개</summary>
         public void ExitOverviewMode()
         {
             if (_minimapCam == null || !_overviewMode) return;
@@ -79,24 +61,21 @@ namespace Rugem.RoadTools
             _overviewMode = false;
         }
 
-        // ── 생명주기 ──────────────────────────────────────────────────────────
+        // ── 생명주기 ─────────────────────────────────────────────────────────
 
-        private void Awake()
-        {
-            ResolveFollowTarget();
-        }
+        private void Awake() => ResolveFollowTarget();
 
         private void Start()
         {
             ResolveFollowTarget();
             CreateMinimapCamera();
             _arrowTex = CreateArrowTexture(32, _markerColor);
+            RebuildFrameTextures(_textureSize);
         }
 
         private void LateUpdate()
         {
-            if (_overviewMode) return; // 오버뷰 중에는 플레이어 추적 중지
-            if (_minimapCam == null || _followTarget == null) return;
+            if (_overviewMode || _minimapCam == null || _followTarget == null) return;
             Vector3 p = _followTarget.position;
             _minimapCam.transform.position = new Vector3(p.x, p.y + _cameraHeight, p.z);
         }
@@ -109,39 +88,37 @@ namespace Rugem.RoadTools
                     _cameraManager.additionalCameras.Remove(_minimapCam);
                 Destroy(_minimapCam.gameObject);
             }
-            if (_rt != null) { _rt.Release(); Destroy(_rt); }
-            if (_arrowTex != null) Destroy(_arrowTex);
+            if (_rt             != null) { _rt.Release(); Destroy(_rt); }
+            if (_arrowTex       != null) Destroy(_arrowTex);
+            if (_circleFrameTex != null) Destroy(_circleFrameTex);
+            if (_circleMaskTex  != null) Destroy(_circleMaskTex);
         }
 
         private void ResolveFollowTarget()
         {
             if (_followTarget != null) return;
-
             var gps = FindAnyObjectByType<FirstPersonGPSController>();
-            if (gps != null)
-                _followTarget = gps.transform;
+            if (gps != null) _followTarget = gps.transform;
         }
 
-        // ── 카메라 설정 ────────────────────────────────────────────────────────
+        // ── 카메라 설정 ───────────────────────────────────────────────────────
 
         private void CreateMinimapCamera()
         {
             if (_minimapCam != null) return;
-
             var go = new GameObject("[MinimapCamera]");
             go.transform.SetParent(transform, false);
-            go.transform.rotation = Quaternion.Euler(90f, 0f, 0f); // 정면 하방
+            go.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
 
             _minimapCam = go.AddComponent<Camera>();
-            _minimapCam.orthographic = true;
+            _minimapCam.orthographic    = true;
             _minimapCam.orthographicSize = _orthographicSize;
-            _minimapCam.clearFlags = CameraClearFlags.SolidColor;
-            _minimapCam.backgroundColor = new Color(0.08f, 0.10f, 0.14f);
-            _minimapCam.nearClipPlane = 1f;
-            _minimapCam.farClipPlane = _cameraHeight + 200f;
-            _minimapCam.depth = -2; // 메인 카메라보다 먼저 렌더
+            _minimapCam.clearFlags      = CameraClearFlags.SolidColor;
+            _minimapCam.backgroundColor = new Color(0.15f, 0.18f, 0.24f);
+            _minimapCam.nearClipPlane   = 1f;
+            _minimapCam.farClipPlane    = _cameraHeight + 200f;
+            _minimapCam.depth           = -2;
 
-            // UI 레이어 제외
             int uiLayer = LayerMask.NameToLayer("UI");
             _minimapCam.cullingMask = uiLayer >= 0 ? ~(1 << uiLayer) : ~0;
 
@@ -149,8 +126,6 @@ namespace Rugem.RoadTools
             _rt.Create();
             _minimapCam.targetTexture = _rt;
 
-            // 기존 Cesium CameraManager에 등록 — 임의 오브젝트에 새 매니저를 만들면
-            // Cesium 네이티브 객체 초기화 순서와 충돌할 수 있다.
             _cameraManager = FindAnyObjectByType<CesiumCameraManager>();
             if (_cameraManager != null)
             {
@@ -161,39 +136,46 @@ namespace Rugem.RoadTools
             }
             else
             {
-                Debug.LogWarning("[Minimap] CesiumCameraManager를 찾을 수 없음 — 미니맵 타일 스트리밍 제한될 수 있음");
+                Debug.LogWarning("[Minimap] CesiumCameraManager를 찾을 수 없음");
             }
         }
 
-        // ── GUI 렌더링 ─────────────────────────────────────────────────────────
+        // ── GUI ──────────────────────────────────────────────────────────────
 
         private void OnGUI()
         {
-            if (_rt == null || _overviewMode) return; // 오버뷰 모드 중에는 소형 미니맵 숨김
+            if (_rt == null || _overviewMode) return;
 
-            Color savedColor = GUI.color;
-            Matrix4x4 savedMatrix = GUI.matrix;
             float mapSize = Screen.height * _mapSizeRatio;
             float margin  = Screen.width  * 0.03f;
             float x = Screen.width  - mapSize - margin;
             float y = margin;
 
-            // 테두리
-            GUI.color = _borderColor;
-            GUI.DrawTexture(new Rect(x - 3, y - 3, mapSize + 6, mapSize + 6), Texture2D.whiteTexture);
-
-            // 미니맵 텍스처
+            // 드롭 쉐도우
+            GUI.color = new Color(0f, 0f, 0f, 0.18f);
+            GUI.DrawTexture(new Rect(x + 2f, y + 5f, mapSize, mapSize), _circleMaskTex ?? Texture2D.whiteTexture);
+            GUI.color = new Color(0f, 0f, 0f, 0.10f);
+            GUI.DrawTexture(new Rect(x, y + 9f, mapSize, mapSize), _circleMaskTex ?? Texture2D.whiteTexture);
             GUI.color = Color.white;
+
+            // 미니맵 렌더텍스처
             GUI.DrawTexture(new Rect(x, y, mapSize, mapSize), _rt, ScaleMode.ScaleToFit, false);
 
-            // 플레이어 방향 화살표 (카메라 yaw 기준 회전)
+            // 원형 프레임 마스크 (바깥 모서리 덮기 → 원형 클리핑 효과)
+            if (_circleFrameTex != null)
+            {
+                GUI.color = Color.white;
+                GUI.DrawTexture(new Rect(x, y, mapSize, mapSize), _circleFrameTex);
+            }
+
+            // 플레이어 방향 화살표
+            Matrix4x4 savedMatrix = GUI.matrix;
             if (_followTarget != null && _arrowTex != null)
             {
-                float yaw      = _followTarget.eulerAngles.y;
-                float cx       = x + mapSize * 0.5f;
-                float cy       = y + mapSize * 0.5f;
-                float arrowSz  = mapSize * 0.14f;
-
+                float yaw     = _followTarget.eulerAngles.y;
+                float cx      = x + mapSize * 0.5f;
+                float cy      = y + mapSize * 0.5f;
+                float arrowSz = mapSize * 0.14f;
                 GUIUtility.RotateAroundPivot(yaw, new Vector2(cx, cy));
                 GUI.color = _markerColor;
                 GUI.DrawTexture(new Rect(cx - arrowSz * 0.5f, cy - arrowSz * 0.5f, arrowSz, arrowSz), _arrowTex);
@@ -205,31 +187,78 @@ namespace Rugem.RoadTools
             {
                 _northStyle = new GUIStyle(GUI.skin.label)
                 {
-                    fontSize  = Mathf.RoundToInt(Screen.height * 0.022f),
+                    fontSize  = Mathf.RoundToInt(Screen.height * 0.020f),
                     fontStyle = FontStyle.Bold,
                     alignment = TextAnchor.UpperCenter,
-                    normal    = { textColor = Color.white }
+                    normal    = { textColor = Color.white },
                 };
             }
             GUI.color = Color.white;
-            GUI.Label(new Rect(x, y + 2f, mapSize, mapSize * 0.25f), "N", _northStyle);
+            float labelSz = mapSize * 0.30f;
+            GUI.Label(new Rect(x, y + mapSize * 0.04f, mapSize, labelSz), "N", _northStyle);
             GUI.matrix = savedMatrix;
-            GUI.color = savedColor;
         }
 
-        // ── 텍스처 생성 ────────────────────────────────────────────────────────
+        // ── 텍스처 생성 ──────────────────────────────────────────────────────
 
-        /// <summary>위를 향하는 삼각형 화살표 Texture2D를 런타임에 생성합니다.</summary>
+        private void RebuildFrameTextures(int size)
+        {
+            if (_lastFrameTexSize == size && _circleFrameTex != null) return;
+            _lastFrameTexSize = size;
+
+            if (_circleFrameTex != null) Destroy(_circleFrameTex);
+            if (_circleMaskTex  != null) Destroy(_circleMaskTex);
+
+            // 배경색 (미니맵 카메라 배경 = 지도 영역 밖)
+            Color bgColor = new Color(0.06f, 0.08f, 0.11f, 1f);
+            _circleFrameTex = MakeCircleFrame(size, bgColor);
+            _circleMaskTex  = MakeCircleMask(size, Color.white);
+        }
+
+        /// <summary>원 안: 투명 / 원 밖: frameColor → 미니맵 위에 덮으면 원형 클리핑</summary>
+        private static Texture2D MakeCircleFrame(int size, Color frameColor)
+        {
+            var tex    = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            var pixels = new Color[size * size];
+            float cx = size * 0.5f, cy = size * 0.5f;
+            float r  = size * 0.5f - 1f;
+            for (int py = 0; py < size; py++)
+            for (int px = 0; px < size; px++)
+            {
+                float dx = px - cx + 0.5f, dy = py - cy + 0.5f;
+                bool inside = dx * dx + dy * dy <= r * r;
+                pixels[py * size + px] = inside ? Color.clear : frameColor;
+            }
+            tex.filterMode = FilterMode.Bilinear;
+            tex.SetPixels(pixels);
+            tex.Apply();
+            return tex;
+        }
+
+        /// <summary>원 안: maskColor / 원 밖: 투명 → 쉐도우용</summary>
+        private static Texture2D MakeCircleMask(int size, Color maskColor)
+        {
+            var tex    = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            var pixels = new Color[size * size];
+            float cx = size * 0.5f, cy = size * 0.5f;
+            float r  = size * 0.5f - 1f;
+            for (int py = 0; py < size; py++)
+            for (int px = 0; px < size; px++)
+            {
+                float dx = px - cx + 0.5f, dy = py - cy + 0.5f;
+                pixels[py * size + px] = dx * dx + dy * dy <= r * r ? maskColor : Color.clear;
+            }
+            tex.filterMode = FilterMode.Bilinear;
+            tex.SetPixels(pixels);
+            tex.Apply();
+            return tex;
+        }
+
         private static Texture2D CreateArrowTexture(int size, Color color)
         {
             var tex    = new Texture2D(size, size, TextureFormat.RGBA32, false);
             var pixels = new Color[size * size];
-
-            float cx       = size * 0.5f;
-            float tipY     = size * 0.05f;
-            float baseY    = size * 0.90f;
-            float halfBase = size * 0.35f;
-
+            float cx = size * 0.5f, tipY = size * 0.05f, baseY = size * 0.90f, halfBase = size * 0.35f;
             for (int py = 0; py < size; py++)
             {
                 float t  = Mathf.InverseLerp(tipY, baseY, py);

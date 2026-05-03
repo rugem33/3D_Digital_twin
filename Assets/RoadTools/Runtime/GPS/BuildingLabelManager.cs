@@ -51,10 +51,10 @@ namespace Rugem.RoadTools
         [SerializeField] private float _labelMaxDistance = 400.0f;
         [Tooltip("스캔에서 사라진 뒤 라벨을 유지할 시간 (초). 카메라 회전 중 깜빡임을 줄입니다.")]
         [SerializeField] private float _labelVisibleGraceSeconds = 1.2f;
-        [SerializeField, Range(10, 36)] private int _fontSize = 15;
-        [SerializeField] private Color _textColor = new Color(1f, 1f, 1f, 0.92f);
-        [SerializeField] private Color _bgColor   = new Color(0f, 0f, 0f, 0.55f);
-        [SerializeField] private Vector2 _padding  = new Vector2(7f, 4f);
+        [SerializeField, Range(10, 36)] private int _fontSize = 13;
+        [SerializeField] private Color _textColor = new Color(0.12f, 0.12f, 0.12f, 1f);
+        [SerializeField] private Color _bgColor   = new Color(1f, 1f, 1f, 0.90f);
+        [SerializeField] private Vector2 _padding  = new Vector2(9f, 5f);
         [SerializeField] private bool _debugLogs = false;
 
         [Header("의존성")]
@@ -336,13 +336,19 @@ namespace Rugem.RoadTools
         {
             float guiY = Screen.height - screenPos.y;
 
-            GUIContent content = new GUIContent(text);
+            GUIContent content  = new GUIContent(text);
             Vector2 textSize = _labelStyle.CalcSize(content);
             float w = textSize.x + _padding.x * 2f;
             float h = textSize.y + _padding.y * 2f;
 
             var bgRect   = new Rect(screenPos.x - w * 0.5f, guiY - h * 0.5f, w, h);
             var textRect = new Rect(bgRect.x + _padding.x, bgRect.y + _padding.y, textSize.x, textSize.y);
+
+            // 드롭 쉐도우
+            GUI.color = new Color(0f, 0f, 0f, 0.12f);
+            GUI.DrawTexture(new Rect(bgRect.x + 1f, bgRect.y + 2f, bgRect.width, bgRect.height),
+                Texture2D.whiteTexture);
+            GUI.color = Color.white;
 
             GUI.Box(bgRect, GUIContent.none, _boxStyle);
             GUI.Label(textRect, content, _labelStyle);

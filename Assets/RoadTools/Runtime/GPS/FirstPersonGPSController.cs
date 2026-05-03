@@ -219,7 +219,7 @@ namespace Rugem.RoadTools
             EnsureButtonStyles();
 
             float margin  = Mathf.Clamp(Screen.width * 0.03f, 14f, 28f);
-            float btnSize = Mathf.Clamp(Screen.height * 0.060f, 46f, 58f);
+            float btnSize = Mathf.Clamp(Screen.height * 0.090f, 70f, 90f);
             // 미니맵(화면 높이의 22%) 아래에 버튼 배치
             float mapSize = Screen.height * MinimapController.MapSizeRatioConst;
             float btnY    = margin + mapSize + margin * 0.4f;
@@ -272,7 +272,7 @@ namespace Rugem.RoadTools
 
             _btnIconStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize  = Mathf.RoundToInt(Mathf.Clamp(Screen.height * 0.032f, 22f, 32f)),
+                fontSize  = Mathf.RoundToInt(Mathf.Clamp(Screen.height * 0.042f, 30f, 44f)),
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
                 normal    = { textColor = Color.white },
@@ -280,7 +280,7 @@ namespace Rugem.RoadTools
 
             _btnLabelStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize  = Mathf.RoundToInt(Mathf.Clamp(Screen.height * 0.011f, 8f, 11f)),
+                fontSize  = Mathf.RoundToInt(Mathf.Clamp(Screen.height * 0.015f, 11f, 15f)),
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
                 normal    = { textColor = new Color(0.76f, 0.88f, 1f, 1f) },
