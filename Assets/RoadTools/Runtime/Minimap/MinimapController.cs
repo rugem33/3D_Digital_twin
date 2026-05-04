@@ -11,6 +11,8 @@ namespace Rugem.RoadTools
     {
         [Header("Follow Target")]
         [SerializeField] private Transform _followTarget;
+        [SerializeField] private Transform _directionTarget;
+        [SerializeField] private GPSLocationService _gpsService;
 
         [Header("Minimap Camera")]
         [SerializeField] private float _cameraHeight = 400f;
@@ -23,6 +25,8 @@ namespace Rugem.RoadTools
         [Header("Canvas UI")]
         [SerializeField] private RawImage _minimapRawImage;
         [SerializeField] private RectTransform _playerArrow;
+        [SerializeField] private float _playerArrowYawOffset = 90f;
+        [SerializeField] private bool _initializePlayerArrowFromCompass = true;
         [SerializeField] private GameObject _minimapRoot;
 
         internal const float MapSizeRatioConst = 0.22f;
@@ -34,6 +38,7 @@ namespace Rugem.RoadTools
 
         private bool _overviewMode;
         private float _savedOrthoSize;
+        private bool _playerArrowCompassInitialized;
 
         public RenderTexture OverviewTexture => _rt;
         public float CurrentOrthoSize => _minimapCam != null ? _minimapCam.orthographicSize : _orthographicSize;
@@ -67,11 +72,23 @@ namespace Rugem.RoadTools
             UpdateCanvasUI();
         }
 
-        private void Awake() => ResolveFollowTarget();
+        public void RecalibratePlayerArrow()
+        {
+            _playerArrowCompassInitialized = false;
+        }
+
+        private void Awake()
+        {
+            ResolveFollowTarget();
+            ResolveDirectionTarget();
+        }
 
         private void Start()
         {
             ResolveFollowTarget();
+            ResolveDirectionTarget();
+            ResolveGPSService();
+            EnableCompassForPlayerArrow();
             CreateMinimapCamera();
             BindCanvasUI();
         }
@@ -85,6 +102,10 @@ namespace Rugem.RoadTools
                 Vector3 p = _followTarget.position;
                 _minimapCam.transform.position = new Vector3(p.x, p.y + _cameraHeight, p.z);
             }
+
+            // Safety: keep the camera looking straight down every frame in case
+            // something else in the scene hierarchy modifies its rotation.
+            _minimapCam.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
 
             UpdateCanvasUI();
         }
@@ -115,6 +136,31 @@ namespace Rugem.RoadTools
                 _followTarget = gps.transform;
         }
 
+        private void ResolveDirectionTarget()
+        {
+            if (_directionTarget != null) return;
+
+            if (Camera.main != null)
+            {
+                _directionTarget = Camera.main.transform;
+                return;
+            }
+
+            _directionTarget = _followTarget;
+        }
+
+        private void ResolveGPSService()
+        {
+            if (_gpsService == null)
+                _gpsService = FindAnyObjectByType<GPSLocationService>();
+        }
+
+        private void EnableCompassForPlayerArrow()
+        {
+            if (_initializePlayerArrowFromCompass)
+                Input.compass.enabled = true;
+        }
+
         private void BindCanvasUI()
         {
             if (_minimapRawImage != null)
@@ -141,8 +187,8 @@ namespace Rugem.RoadTools
 
             if (_playerArrow == null || _followTarget == null) return;
 
-            float yaw = GetHorizontalYaw(_followTarget);
-            _playerArrow.localEulerAngles = new Vector3(0f, 0f, -yaw);
+            float yaw = GetDirectionYaw();
+            _playerArrow.localEulerAngles = new Vector3(0f, 0f, -yaw + _playerArrowYawOffset);
         }
 
         private void CreateMinimapCamera()
@@ -150,7 +196,8 @@ namespace Rugem.RoadTools
             if (_minimapCam != null) return;
 
             var go = new GameObject("[MinimapCamera]");
-            go.transform.SetParent(transform, false);
+            // No parent: avoids inheriting the player camera's yaw/pitch rotation,
+            // which would cause the rendered map to spin as the player turns.
             go.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
 
             _minimapCam = go.AddComponent<Camera>();
@@ -192,6 +239,83 @@ namespace Rugem.RoadTools
                 return target.eulerAngles.y;
 
             return Quaternion.LookRotation(forward.normalized, Vector3.up).eulerAngles.y;
+        }
+
+        private float GetDirectionYaw()
+        {
+            // Always prefer the compass so the arrow reflects the phone's real-world
+            // facing direction from the very first frame and through all camera modes
+            // (Gyro / Locked / Drag). The minimap is north-up (camera locked to
+            // Euler(90,0,0)), so compass heading maps directly to arrow rotation.
+            if (_initializePlayerArrowFromCompass && TryGetCompassHeading(out float compassHeading))
+            {
+                if (!_playerArrowCompassInitialized)
+                {
+                    _playerArrowCompassInitialized = true;
+                    Debug.Log($"[Minimap] Player arrow compass active: {GetCardinalDirection(compassHeading)} ({compassHeading:F0}°)");
+                }
+                TryGetWorldNorthYaw(out float northYaw);
+                return northYaw + compassHeading;
+            }
+
+            // Fallback when compass is unavailable (editor / no hardware sensor).
+            return GetCameraYaw();
+        }
+
+        private float GetCameraYaw()
+        {
+            if (Camera.main != null)
+                return GetHorizontalYaw(Camera.main.transform);
+
+            Transform t = _directionTarget != null ? _directionTarget : _followTarget;
+            return GetHorizontalYaw(t);
+        }
+
+        private bool TryGetCompassHeading(out float heading)
+        {
+            heading = 0f;
+            if (Input.compass.timestamp <= 0.0) return false;
+
+            float h = Input.compass.trueHeading;
+            if (h < 0f || float.IsNaN(h))
+                h = Input.compass.magneticHeading;
+            if (h < 0f || float.IsNaN(h))
+                return false;
+
+            heading = h;
+            return true;
+        }
+
+        private bool TryGetWorldNorthYaw(out float yaw)
+        {
+            yaw = 0f;
+            ResolveGPSService();
+            if (_gpsService == null)
+                return false;
+
+            double lat = _gpsService.CurrentLatitude;
+            double lon = _gpsService.CurrentLongitude;
+            if (System.Math.Abs(lat) < 0.000001 && System.Math.Abs(lon) < 0.000001)
+                return false;
+
+            Vector3 here = _gpsService.ConvertToUnityPosition(lat, lon, _gpsService.CurrentAltitude);
+            Vector3 north = _gpsService.ConvertToUnityPosition(lat + 0.00001, lon, _gpsService.CurrentAltitude);
+            Vector3 northFlat = north - here;
+            northFlat.y = 0f;
+            if (northFlat.sqrMagnitude < 0.0001f)
+                return false;
+
+            yaw = Quaternion.LookRotation(northFlat.normalized, Vector3.up).eulerAngles.y;
+            return true;
+        }
+
+        private static string GetCardinalDirection(float heading)
+        {
+            float normalized = Mathf.Repeat(heading, 360f);
+            if (normalized >= 315f || normalized < 45f) return "N";
+            if (normalized < 135f) return "E";
+            if (normalized < 225f) return "S";
+            return "W";
         }
     }
 }
