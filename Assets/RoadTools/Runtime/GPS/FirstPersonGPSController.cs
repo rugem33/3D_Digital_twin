@@ -45,6 +45,8 @@ namespace Rugem.RoadTools
         [SerializeField] private bool _forceCompassOnly = false;
         [Tooltip("Use compass true heading first so the phone's real facing direction matches the world/minimap direction.")]
         [SerializeField] private bool _preferCompassHeading = true;
+        [Tooltip("Yaw correction in degrees after a stable heading is accepted.")]
+        [SerializeField] private float _headingYawCorrection = -90f;
         [Tooltip("Minimum horizontal heading strength required before the app accepts/recalibrates phone direction.")]
         [SerializeField, Range(0.1f, 0.95f)] private float _uprightHeadingMinHorizontal = 0.45f;
         [Tooltip("자이로 기준 yaw를 현재 카메라 yaw에 맞춰 시작합니다.")]
@@ -447,7 +449,7 @@ namespace Rugem.RoadTools
                 _gyroYawCalibrated = true;
             }
 
-            rotation = Quaternion.Euler(0f, _gyroYawOffset, 0f) * gyroRotation;
+            rotation = Quaternion.Euler(0f, _gyroYawOffset + _headingYawCorrection, 0f) * gyroRotation;
             return true;
         }
 
@@ -466,7 +468,7 @@ namespace Rugem.RoadTools
                 return false;
 
             float northYaw = TryGetWorldNorthYaw(out float worldNorthYaw) ? worldNorthYaw : 0f;
-            rotation = Quaternion.Euler(0f, northYaw + heading, 0f);
+            rotation = Quaternion.Euler(0f, northYaw + heading + _headingYawCorrection, 0f);
             return true;
         }
 
