@@ -35,10 +35,11 @@ namespace Rugem.RoadTools
         private RenderTexture _rt;
         private CesiumCameraManager _cameraManager;
         private bool _registeredWithCameraManager;
+        private FirstPersonGPSController _gpsController;
 
         private bool _overviewMode;
         private float _savedOrthoSize;
-        private bool _playerArrowCompassInitialized;
+        private float _diagnosticTimer;
 
         public RenderTexture OverviewTexture => _rt;
         public float CurrentOrthoSize => _minimapCam != null ? _minimapCam.orthographicSize : _orthographicSize;
@@ -74,7 +75,6 @@ namespace Rugem.RoadTools
 
         public void RecalibratePlayerArrow()
         {
-            _playerArrowCompassInitialized = false;
         }
 
         private void Awake()
@@ -129,11 +129,15 @@ namespace Rugem.RoadTools
 
         private void ResolveFollowTarget()
         {
-            if (_followTarget != null) return;
-
-            var gps = FindAnyObjectByType<FirstPersonGPSController>();
+            var gps = _gpsController != null
+                ? _gpsController
+                : FindAnyObjectByType<FirstPersonGPSController>();
             if (gps != null)
-                _followTarget = gps.transform;
+            {
+                _gpsController = gps;
+                if (_followTarget == null)
+                    _followTarget = gps.transform;
+            }
         }
 
         private void ResolveDirectionTarget()
@@ -243,22 +247,19 @@ namespace Rugem.RoadTools
 
         private float GetDirectionYaw()
         {
-            // Always prefer the compass so the arrow reflects the phone's real-world
-            // facing direction from the very first frame and through all camera modes
-            // (Gyro / Locked / Drag). The minimap is north-up (camera locked to
-            // Euler(90,0,0)), so compass heading maps directly to arrow rotation.
-            if (_initializePlayerArrowFromCompass && TryGetCompassHeading(out float compassHeading))
+            // [DIAG] 1초마다 compass 상태 출력 — 확인 후 제거
+            _diagnosticTimer += Time.deltaTime;
+            if (_diagnosticTimer >= 1f)
             {
-                if (!_playerArrowCompassInitialized)
-                {
-                    _playerArrowCompassInitialized = true;
-                    Debug.Log($"[Minimap] Player arrow compass active: {GetCardinalDirection(compassHeading)} ({compassHeading:F0}°)");
-                }
-                TryGetWorldNorthYaw(out float northYaw);
-                return northYaw + compassHeading;
+                _diagnosticTimer = 0f;
+                float camYaw = GetCameraYaw();
+                string mode = _gpsController != null ? _gpsController.CurrentRotationMode.ToString() : "null";
+                Debug.Log($"[Minimap] ts={Input.compass.timestamp:F2} true={Input.compass.trueHeading:F1} mag={Input.compass.magneticHeading:F1} camYaw={camYaw:F1} mode={mode}");
             }
 
-            // Fallback when compass is unavailable (editor / no hardware sensor).
+            // Camera.main의 UpdateRotation()이 이미 compass+gyro 융합(northYaw 보정 포함)을
+            // 수행한 뒤 LateUpdate가 실행되므로, 카메라 yaw를 직접 읽는 것이
+            // northYaw+compassHeading과 동등하면서 USB 자기 간섭에 영향받지 않는다.
             return GetCameraYaw();
         }
 
@@ -286,36 +287,5 @@ namespace Rugem.RoadTools
             return true;
         }
 
-        private bool TryGetWorldNorthYaw(out float yaw)
-        {
-            yaw = 0f;
-            ResolveGPSService();
-            if (_gpsService == null)
-                return false;
-
-            double lat = _gpsService.CurrentLatitude;
-            double lon = _gpsService.CurrentLongitude;
-            if (System.Math.Abs(lat) < 0.000001 && System.Math.Abs(lon) < 0.000001)
-                return false;
-
-            Vector3 here = _gpsService.ConvertToUnityPosition(lat, lon, _gpsService.CurrentAltitude);
-            Vector3 north = _gpsService.ConvertToUnityPosition(lat + 0.00001, lon, _gpsService.CurrentAltitude);
-            Vector3 northFlat = north - here;
-            northFlat.y = 0f;
-            if (northFlat.sqrMagnitude < 0.0001f)
-                return false;
-
-            yaw = Quaternion.LookRotation(northFlat.normalized, Vector3.up).eulerAngles.y;
-            return true;
-        }
-
-        private static string GetCardinalDirection(float heading)
-        {
-            float normalized = Mathf.Repeat(heading, 360f);
-            if (normalized >= 315f || normalized < 45f) return "N";
-            if (normalized < 135f) return "E";
-            if (normalized < 225f) return "S";
-            return "W";
-        }
     }
 }

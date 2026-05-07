@@ -131,8 +131,30 @@ namespace Rugem.RoadTools
 
             // 2. ECEF → Unity 월드 좌표계
             double3 unityCoords = _georeference.TransformEarthCenteredEarthFixedPositionToUnity(ecef);
-
             return (Vector3)(float3)unityCoords;
+        }
+
+        /// <summary>현재 GPS 위치 기준으로 Unity 월드 북쪽 yaw를 반환합니다.</summary>
+        public bool TryGetWorldNorthYaw(out float yaw)
+        {
+            yaw = 0f;
+            if (_georeference == null)
+                return false;
+
+            double lat = CurrentLatitude;
+            double lon = CurrentLongitude;
+            if (System.Math.Abs(lat) < 0.000001 && System.Math.Abs(lon) < 0.000001)
+                return false;
+
+            Vector3 here = ConvertToUnityPosition(lat, lon, CurrentAltitude);
+            Vector3 north = ConvertToUnityPosition(lat + 0.00001, lon, CurrentAltitude);
+            Vector3 northFlat = north - here;
+            northFlat.y = 0f;
+            if (northFlat.sqrMagnitude < 0.0001f)
+                return false;
+
+            yaw = Quaternion.LookRotation(northFlat.normalized, Vector3.up).eulerAngles.y;
+            return true;
         }
 
         // ── 내부 구현 ──────────────────────────────────────────────────────────

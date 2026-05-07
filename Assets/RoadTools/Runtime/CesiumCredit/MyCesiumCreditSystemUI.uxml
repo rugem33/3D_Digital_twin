@@ -1,0 +1,4 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" xsi="http://www.w3.org/2001/XMLSchema-instance" engine="UnityEngine.UIElements" editor="UnityEditor.UIElements" noNamespaceSchemaLocation="../../../../UIElementsSchema/UIElements.xsd" editor-extension-mode="False">
+    <ui:VisualElement name="PopupCredits" style="display: none; visibility: hidden;" picking-mode="Ignore" />
+    <ui:VisualElement name="OnScreenCredits" style="display: none; visibility: hidden;" picking-mode="Ignore" />
+</ui:UXML>
