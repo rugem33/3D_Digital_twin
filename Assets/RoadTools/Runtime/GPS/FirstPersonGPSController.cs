@@ -40,17 +40,23 @@ namespace Rugem.RoadTools
         [SerializeField] private float _positionLerpSpeed = 8f;
 
         [Header("방향 센서")]
-        [SerializeField] private float _rotationLerpSpeed = 10f;
+        [SerializeField] private float _rotationLerpSpeed = 5f;
         [Tooltip("ON: 자이로 없는 기기에서 컴퍼스(Y축)만 사용 / OFF: 자동 감지")]
         [SerializeField] private bool _forceCompassOnly = false;
         [Tooltip("Use compass true heading first so the phone's real facing direction matches the world/minimap direction.")]
-        [SerializeField] private bool _preferCompassHeading = true;
+        [SerializeField] private bool _preferCompassHeading = false;
         [Tooltip("Yaw correction in degrees after a stable heading is accepted.")]
         [SerializeField] private float _headingYawCorrection = 0f;
         [Tooltip("Minimum horizontal heading strength required before the app accepts/recalibrates phone direction.")]
         [SerializeField, Range(0.1f, 0.95f)] private float _uprightHeadingMinHorizontal = 0.45f;
         [Tooltip("자이로 기준 yaw를 현재 카메라 yaw에 맞춰 시작합니다.")]
         [SerializeField] private bool _autoCalibrateGyroYaw = true;
+
+        [Header("자이로 노이즈 필터")]
+        [Tooltip("자이로 각속도 저역통과 필터 계수. 낮을수록 부드럽고 반응이 느림 (권장: 8~15)")]
+        [SerializeField, Range(1f, 30f)] private float _gyroSmoothFactor = 12f;
+        [Tooltip("이 값(°/초) 미만의 회전은 미세 떨림으로 간주하고 무시 (권장: 0.5~2)")]
+        [SerializeField, Range(0f, 5f)] private float _gyroDeadZoneDegSec = 1f;
 
         [Header("드래그 회전")]
         [Tooltip("드래그 감도 (높을수록 민감)")]
@@ -107,7 +113,13 @@ namespace Rugem.RoadTools
         private int _buttonStyleScreenHeight;
         private bool _gpsSubscribed;
         private int _heightSampleVersion;
-        private MinimapController _minimapController;
+        private float _recalibrationTimer;
+        private const float RecalibrationInterval = 60f;
+
+        private bool _gyroSensorAvailable;
+        private float _trackedWorldYaw;
+        private bool _gyroYawInitialized;
+        private Vector3 _smoothedAngVel;
 
         // ── 유니티 생명주기 ────────────────────────────────────────────────────
 
@@ -150,6 +162,13 @@ namespace Rugem.RoadTools
         {
             UpdateRotation();
 
+            _recalibrationTimer += Time.deltaTime;
+            if (_recalibrationTimer >= RecalibrationInterval)
+            {
+                _recalibrationTimer = 0f;
+                ResetGyroCalibration();
+            }
+
             if (!_hasInitialPosition) return;
             EnsureGlobeAnchor();
             if (_globeAnchor == null) return;
@@ -177,6 +196,7 @@ namespace Rugem.RoadTools
                 {
                     InputSystem.EnableDevice(AttitudeSensor.current);
                     ResetGyroCalibration();
+                    _recalibrationTimer = 0f;
                     Debug.Log("[FirstPersonGPS] AttitudeSensor 재활성화 (앱 재개)");
                 }
             }
@@ -188,6 +208,7 @@ namespace Rugem.RoadTools
             {
                 InputSystem.EnableDevice(AttitudeSensor.current);
                 ResetGyroCalibration();
+                _recalibrationTimer = 0f;
                 Debug.Log("[FirstPersonGPS] AttitudeSensor 재활성화 (포커스 복귀)");
             }
         }
@@ -196,6 +217,8 @@ namespace Rugem.RoadTools
         {
             if (_gyroAvailable && AttitudeSensor.current != null)
                 InputSystem.DisableDevice(AttitudeSensor.current);
+            if (_gyroSensorAvailable && UnityEngine.InputSystem.Gyroscope.current != null)
+                InputSystem.DisableDevice(UnityEngine.InputSystem.Gyroscope.current);
             if (_compassEnabled)
                 Input.compass.enabled = false;
 
@@ -215,12 +238,20 @@ namespace Rugem.RoadTools
         {
             Input.compass.enabled = true;
             _compassEnabled = Input.compass.enabled;
+            Debug.Log($"[FirstPersonGPS] compass.enabled={_compassEnabled} (ts={Input.compass.timestamp:F2})");
 
             if (!_forceCompassOnly && AttitudeSensor.current != null)
             {
                 InputSystem.EnableDevice(AttitudeSensor.current);
                 _gyroAvailable = true;
                 Debug.Log("[FirstPersonGPS] AttitudeSensor(자이로) 활성화");
+            }
+
+            if (UnityEngine.InputSystem.Gyroscope.current != null)
+            {
+                InputSystem.EnableDevice(UnityEngine.InputSystem.Gyroscope.current);
+                _gyroSensorAvailable = true;
+                Debug.Log("[FirstPersonGPS] UnityEngine.InputSystem.Gyroscope 활성화");
             }
             else
             {
@@ -265,13 +296,6 @@ namespace Rugem.RoadTools
             GUI.Label(new Rect(buttonRect.x, buttonRect.y + btnSize * 0.05f, btnSize, btnSize * 0.58f), icon, _btnIconStyle);
             GUI.Label(new Rect(buttonRect.x, buttonRect.y + btnSize * 0.60f, btnSize, btnSize * 0.32f), label, _btnLabelStyle);
 
-            // ── 방위 재보정 버튼 ──
-            Rect recalRect = new Rect(btnX, btnY + btnSize + margin * 0.5f, btnSize, btnSize);
-            if (GUI.Button(recalRect, "", _btnStyle))
-                RecalibrateCompass();
-
-            GUI.Label(new Rect(recalRect.x, recalRect.y + btnSize * 0.05f, btnSize, btnSize * 0.58f), "⊕", _btnIconStyle);
-            GUI.Label(new Rect(recalRect.x, recalRect.y + btnSize * 0.60f, btnSize, btnSize * 0.32f), "방위", _btnLabelStyle);
         }
 
         private void EnsureButtonStyles()
@@ -357,9 +381,10 @@ namespace Rugem.RoadTools
         public void RecalibrateCompass()
         {
             ResetGyroCalibration();
-            _minimapController?.RecalibratePlayerArrow();
             Debug.Log("[FirstPersonGPS] 방위 재보정 요청");
         }
+
+        public RotationMode CurrentRotationMode => _rotationMode;
 
         public void CycleRotationMode()
         {
@@ -412,9 +437,10 @@ namespace Rugem.RoadTools
                     {
                         if (TryGetCalibratedGyroRotation(AttitudeSensor.current.attitude.ReadValue(), out Quaternion gyroRotation))
                         {
+                            // Gyro integration already smoothed by low-pass filter + dead zone.
+                            // Skip Slerp to avoid oscillation from chasing a continuously moving target.
                             _targetRotation = gyroRotation;
-                            transform.rotation = Quaternion.Slerp(
-                                transform.rotation, _targetRotation, Time.deltaTime * _rotationLerpSpeed);
+                            transform.rotation = gyroRotation;
                         }
                     }
                     break;
@@ -459,6 +485,7 @@ namespace Rugem.RoadTools
         private void ResetGyroCalibration()
         {
             _gyroYawCalibrated = false;
+            _gyroYawInitialized = false;
             _compassCalibrationTimer = 0f;
             _hadFirstCompassReading = false;
             _lastScreenOrientation = Screen.orientation;
@@ -481,19 +508,44 @@ namespace Rugem.RoadTools
 
             if (_autoCalibrateGyroYaw && !_gyroYawCalibrated)
             {
-                // Wait for the compass before calibrating so the gyro aligns to the
-                // real-world heading instead of the scene's default north-facing direction.
-                if (_compassEnabled && Input.compass.timestamp <= 0.0)
+                // When AttitudeSensor (gyro) is available it already provides absolute
+                // orientation via the device rotation-vector sensor — no need to wait
+                // for Input.compass (which may never initialise when the project uses
+                // only the new InputSystem). Only delay when running compass-only mode.
+                if (!_gyroAvailable && _compassEnabled && Input.compass.timestamp <= 0.0)
                 {
                     _compassCalibrationTimer += Time.deltaTime;
                     if (_compassCalibrationTimer < CompassCalibrationTimeout)
                         return false;
-                    // Compass unavailable after timeout — calibrate to current camera yaw.
                 }
                 CalibrateGyroYawToCurrentRotation(gyroRotation);
             }
 
-            rotation = Quaternion.Euler(0f, _gyroYawOffset + _headingYawCorrection, 0f) * gyroRotation;
+            if (_gyroYawInitialized && _gyroSensorAvailable && UnityEngine.InputSystem.Gyroscope.current != null)
+            {
+                // Per-frame: integrate raw gyroscope angular velocity only (no magnetometer → no jitter)
+                Vector3 angVel = UnityEngine.InputSystem.Gyroscope.current.angularVelocity.ReadValue();
+                // Apply same chirality conversion as GyroToWorldRotation (negate Z)
+                Vector3 angVelConverted = new Vector3(angVel.x, angVel.y, -angVel.z);
+
+                // Low-pass filter: suppress high-frequency gyro noise
+                float alpha = Mathf.Clamp01(_gyroSmoothFactor * Time.deltaTime);
+                _smoothedAngVel = Vector3.Lerp(_smoothedAngVel, angVelConverted, alpha);
+
+                // Transform smoothed angular velocity to world space
+                float worldYawRate = (transform.rotation * _smoothedAngVel).y * Mathf.Rad2Deg;
+
+                // Dead zone: ignore micro-vibration below threshold
+                if (Mathf.Abs(worldYawRate) < _gyroDeadZoneDegSec)
+                    worldYawRate = 0f;
+
+                _trackedWorldYaw = (_trackedWorldYaw - worldYawRate * Time.deltaTime + 360f) % 360f;
+                rotation = Quaternion.Euler(0f, _trackedWorldYaw + _headingYawCorrection, 0f);
+            }
+            else
+            {
+                rotation = Quaternion.Euler(0f, _gyroYawOffset + _headingYawCorrection, 0f) * gyroRotation;
+            }
             return true;
         }
 
@@ -522,13 +574,31 @@ namespace Rugem.RoadTools
                     heading = Input.compass.magneticHeading;
                 if (heading >= 0f && !float.IsNaN(heading))
                 {
-                    TryGetWorldNorthYaw(out float northYaw);
+                    float northYaw = 0f;
+                    if (_gpsService != null && _gpsService.TryGetWorldNorthYaw(out float worldNorthYaw))
+                        northYaw = worldNorthYaw;
                     targetYaw = northYaw + heading + _headingYawCorrection;
                 }
+            }
+            else if (_gyroAvailable)
+            {
+                // Input.compass unavailable (old/new InputSystem conflict).
+                // AttitudeSensor uses TYPE_ROTATION_VECTOR which already encodes absolute
+                // geomagnetic heading — trust the sensor directly with no offset correction.
+                targetYaw = correctedGyroYaw;
             }
 
             _gyroYawOffset = Mathf.DeltaAngle(correctedGyroYaw, targetYaw);
             _gyroYawCalibrated = true;
+
+            // Initialize tracked yaw for gyro-only per-frame integration
+            if (_gyroSensorAvailable)
+            {
+                _trackedWorldYaw = (targetYaw + 360f) % 360f;
+                _gyroYawInitialized = true;
+            }
+
+            Debug.Log($"[FirstPersonGPS] 자이로 보정 완료 — targetYaw={targetYaw:F1} gyroYaw={correctedGyroYaw:F1} offset={_gyroYawOffset:F1}");
         }
 
         private bool TryGetCompassYawRotation(out Quaternion rotation)
@@ -545,7 +615,9 @@ namespace Rugem.RoadTools
             if (heading < 0f || float.IsNaN(heading))
                 return false;
 
-            float northYaw = TryGetWorldNorthYaw(out float worldNorthYaw) ? worldNorthYaw : 0f;
+            float northYaw = 0f;
+            if (_gpsService != null && _gpsService.TryGetWorldNorthYaw(out float worldNorthYaw))
+                northYaw = worldNorthYaw;
             rotation = Quaternion.Euler(0f, northYaw + heading + _headingYawCorrection, 0f);
             return true;
         }
@@ -553,32 +625,14 @@ namespace Rugem.RoadTools
         private bool IsPhoneUprightForHeading()
         {
             if (!_gyroAvailable || AttitudeSensor.current == null)
-                return true;
+            {
+                // acceleration.z ≈ 0 when upright, ≈ ±1 when flat — reject compass when phone is too flat
+                float maxFlatAxis = Mathf.Sqrt(1f - _uprightHeadingMinHorizontal * _uprightHeadingMinHorizontal);
+                return Mathf.Abs(Input.acceleration.z) <= maxFlatAxis;
+            }
 
             Quaternion attitude = AttitudeSensor.current.attitude.ReadValue();
             return HasStableHorizontalHeading(GyroToWorldRotation(attitude, Screen.orientation));
-        }
-
-        private bool TryGetWorldNorthYaw(out float yaw)
-        {
-            yaw = 0f;
-            if (_gpsService == null)
-                return false;
-
-            double lat = _gpsService.CurrentLatitude;
-            double lon = _gpsService.CurrentLongitude;
-            if (System.Math.Abs(lat) < 0.000001 && System.Math.Abs(lon) < 0.000001)
-                return false;
-
-            Vector3 here = _gpsService.ConvertToUnityPosition(lat, lon, _gpsService.CurrentAltitude);
-            Vector3 north = _gpsService.ConvertToUnityPosition(lat + 0.00001, lon, _gpsService.CurrentAltitude);
-            Vector3 northFlat = north - here;
-            northFlat.y = 0f;
-            if (northFlat.sqrMagnitude < 0.0001f)
-                return false;
-
-            yaw = Quaternion.LookRotation(northFlat.normalized, Vector3.up).eulerAngles.y;
-            return true;
         }
 
         private bool TryExtractHorizontalHeading(Quaternion rotation, out Quaternion heading)
@@ -688,8 +742,6 @@ namespace Rugem.RoadTools
                 _gpsService = FindAnyObjectByType<GPSLocationService>();
             if (_permissionHandler == null)
                 _permissionHandler = FindAnyObjectByType<LocationPermissionHandler>();
-            if (_minimapController == null)
-                _minimapController = FindAnyObjectByType<MinimapController>();
         }
 
         private void EnsureGlobeAnchor()
