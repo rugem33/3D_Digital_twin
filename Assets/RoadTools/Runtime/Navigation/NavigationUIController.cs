@@ -497,7 +497,7 @@ namespace Rugem.RoadTools
         private void DrawNavigationBar()
         {
             float margin = Mathf.Clamp(Screen.width * 0.035f, 12f, 26f);
-            // DrawRouteDirectionGuide(margin);
+            DrawRouteDirectionGuide(margin);
             float cardH  = Mathf.Clamp(Screen.height * 0.22f, 150f, 198f);
             float cardY  = Screen.height - cardH - margin;
             float cardW  = Screen.width - margin * 2f;

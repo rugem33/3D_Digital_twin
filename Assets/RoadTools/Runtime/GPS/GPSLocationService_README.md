@@ -4,7 +4,7 @@
 
 `GPSLocationService`는 실제 GPS 위치를 수신하고, 위도/경도/고도 좌표를 Cesium 기반 Unity 월드 좌표로 변환하는 서비스 컴포넌트입니다.
 
-`LocationPermissionHandler`가 "GPS를 사용할 권한이 있는지"를 담당한다면, `GPSLocationService`는 "현재 GPS 값을 읽고 Unity 공간의 위치로 바꾸는 일"을 담당합니다.
+`FirstPersonGPSController`가 "GPS를 사용할 권한이 있는지"와 "언제 GPS를 시작할지"를 담당한다면, `GPSLocationService`는 "현재 GPS 값을 읽고 Unity 공간의 위치로 바꾸는 일"을 담당합니다.
 카메라를 직접 움직이지는 않고, 변환된 위치를 이벤트로 다른 컴포넌트에 전달합니다.
 
 ## 핵심 역할
@@ -111,7 +111,7 @@ _gpsCoroutine = StartCoroutine(GPSUpdateLoop());
 ```
 
 일반적으로 이 메서드는 위치 권한이 허용된 뒤 호출해야 합니다.
-예를 들어 `FirstPersonGPSController`는 `LocationPermissionHandler.OnPermissionGranted` 이벤트를 받은 뒤 `StartGPS()`를 호출합니다.
+예를 들어 `FirstPersonGPSController`는 위치 권한이 허용된 뒤 `StartGPS()`를 호출합니다.
 
 ## GPS 중지
 
@@ -271,17 +271,14 @@ StopGPS()
 
 GPS 관련 컴포넌트의 책임은 다음처럼 나뉩니다.
 
-- `LocationPermissionHandler`: 위치 권한 확인과 요청
 - `GPSLocationService`: GPS 수신, 위도/경도/고도 저장, Cesium/Unity 좌표 변환
-- `FirstPersonGPSController`: 변환된 위치를 받아 카메라 위치와 방향 갱신
+- `FirstPersonGPSController`: 위치 권한 확인과 요청, GPS 시작 타이밍 제어, 변환된 위치를 받아 카메라 위치와 방향 갱신
 
 전체 연결 흐름은 다음과 같습니다.
 
 ```text
-LocationPermissionHandler
-  -> 권한 허용 이벤트 발생
-
 FirstPersonGPSController
+  -> 위치 권한 허용 확인
   -> GPSLocationService.StartGPS() 호출
   -> GPSLocationService.OnRawPositionUpdated 구독
 

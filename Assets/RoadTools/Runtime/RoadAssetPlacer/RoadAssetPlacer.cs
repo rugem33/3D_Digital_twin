@@ -10,6 +10,9 @@ namespace Rugem.RoadTools
 {
     public enum NavMeshEdgeSide { Right, Left, Both, Nearest }
 
+    /// <summary>OSM 폴리라인 기준 에셋 배치 방향 (NavMesh 불필요)</summary>
+    public enum RoadSide { Center, Right, Left, Both }
+
     public class RoadAssetPlacer : MonoBehaviour
     {
         public GameObject assetPrefab;
@@ -29,7 +32,7 @@ namespace Rugem.RoadTools
         [Tooltip("에셋이 올라갈 지형 레이어 (Road 레이어 설정 필요)")]
         public LayerMask roadLayerMask;
 
-        [Header("선 데이터 외곽 배치")]
+        [Header("선 데이터 외곽 배치 (NavMesh 기반)")]
         [Tooltip("활성화 시 NavMesh 외곽에 자동 스냅하여 배치합니다.")]
         public bool useNavMeshEdge = false;
 
@@ -38,6 +41,13 @@ namespace Rugem.RoadTools
 
         [Tooltip("외곽 탐색 반경 (미터). 도로 최대 폭의 절반보다 크게 설정하면 자동으로 도로 경계에 스냅됩니다. 기본 50m.")]
         public float edgeSearchRadius = 50f;
+
+        [Header("OSM 폴리라인 측면 오프셋 (NavMesh 불필요)")]
+        [Tooltip("도로 중심선에서 측면으로 이동할 거리 (미터). 0이면 중심선에 배치.")]
+        public float roadSideOffset = 4f;
+
+        [Tooltip("배치 방향. Center=중심선, Right=우측, Left=좌측, Both=양쪽")]
+        public RoadSide roadSide = RoadSide.Right;
 
         [Header("타입별 그룹 (자동 관리)")]
         [SerializeField] private List<TypeGroup> _typeGroups = new List<TypeGroup>();
@@ -277,6 +287,33 @@ namespace Rugem.RoadTools
             return center;
         }
 
+        /// <summary>
+        /// roadSide / roadSideOffset 설정에 따라 도로 중심선에서 실제 배치할 포인트를 반환합니다.
+        /// NavMesh 없이 순수 벡터 연산만 사용합니다.
+        /// </summary>
+        private List<Vector3> ResolveSideOffsets(Vector3 center, Vector3 right)
+        {
+            var result = new List<Vector3>(2);
+            float off = roadSideOffset;
+
+            if (roadSide == RoadSide.Center || !IsFinite(right) || right.sqrMagnitude <= Mathf.Epsilon || off <= 0f)
+            {
+                result.Add(center);
+                return result;
+            }
+
+            switch (roadSide)
+            {
+                case RoadSide.Right:  result.Add(center + right * off);  break;
+                case RoadSide.Left:   result.Add(center - right * off);  break;
+                case RoadSide.Both:
+                    result.Add(center + right * off);
+                    result.Add(center - right * off);
+                    break;
+            }
+            return result;
+        }
+
         /// <summary>주어진 월드 포인트 위에서 레이캐스트로 지형 표면을 찾아 에셋을 배치합니다.</summary>
         private bool TryPlaceAsset(Vector3 worldPoint, Vector3 segDir, Vector3 localUp, GameObject parent)
         {
@@ -302,6 +339,64 @@ namespace Rugem.RoadTools
                     r.shadowCastingMode = ShadowCastingMode.Off;
 
             return true;
+        }
+
+        // ── OSM 폴리라인 에셋 배치 (NavMesh 불필요) ───────────────────────────
+
+        /// <summary>
+        /// OSM way 노드 좌표 목록을 따라 treeInterval 간격으로 에셋을 배치합니다.
+        /// NavMesh 없이 Physics.Raycast만으로 지형을 탐지합니다.
+        /// RoadAssetAutoLoader에서 Overpass API 결과를 받아 호출합니다.
+        /// </summary>
+        public int PlaceLineAlongPolyline(List<(double lat, double lon)> wayNodes, string typeName)
+        {
+            if (assetPrefab == null || !EnsureGeoreference() || wayNodes == null || wayNodes.Count < 2)
+                return 0;
+
+            string groupName = $"Way_{wayNodes[0].lat:F4}_{wayNodes[0].lon:F4}";
+            GameObject lineParent = new GameObject(groupName);
+            lineParent.transform.SetParent(GetOrCreateTypeGroup(typeName).transform);
+
+            int successCount = 0;
+            float distToNext = 0f;
+
+            for (int i = 0; i < wayNodes.Count - 1; i++)
+            {
+                Vector3 segStart = LatLonToUnity(wayNodes[i].lon,     wayNodes[i].lat,     500.0);
+                Vector3 segEnd   = LatLonToUnity(wayNodes[i + 1].lon, wayNodes[i + 1].lat, 500.0);
+                if (!IsFinite(segStart) || !IsFinite(segEnd)) { distToNext = 0f; continue; }
+
+                Vector3 segVec = segEnd - segStart;
+                float   segLen = segVec.magnitude;
+                if (segLen <= Mathf.Epsilon) continue;
+
+                Vector3 segDir  = segVec / segLen;
+                Vector3 localUp = GetLocalUpAtUnityPos(segStart);
+
+                // 진행 방향 기준 우측 수직벡터 (도로 측면 오프셋용)
+                Vector3 right = Vector3.Cross(segDir, localUp).normalized;
+
+                for (float d = distToNext; d <= segLen; d += treeInterval)
+                {
+                    Vector3 center = segStart + segDir * d;
+                    foreach (var pt in ResolveSideOffsets(center, right))
+                    {
+                        if (TryPlaceAsset(pt, segDir, localUp, lineParent))
+                            successCount++;
+                    }
+                    if (treeInterval <= 0f) break;
+                }
+
+                float lastD = distToNext + Mathf.Floor((segLen - distToNext) / Mathf.Max(treeInterval, 0.01f)) * treeInterval;
+                distToNext = treeInterval - (segLen - lastD);
+                if (distToNext < 0f) distToNext = 0f;
+            }
+
+            if (applyStaticBatching && successCount > 0 && !ContainsCesiumGlobeAnchor(lineParent))
+                StaticBatchingUtility.Combine(lineParent);
+
+            UnityEngine.Debug.Log($"[RoadTools] PlaceLineAlongPolyline: {successCount}개 배치");
+            return successCount;
         }
 
         // ── 점(Point) 데이터 에셋 배치 ───────────────────────────────────────

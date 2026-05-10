@@ -82,7 +82,7 @@ namespace Rugem.RoadTools
         // ── 공개 메서드 ────────────────────────────────────────────────────────
 
         /// <summary>
-        /// GPS 수신을 시작합니다. LocationPermissionHandler에서 권한 허용 후 호출하세요.
+        /// GPS 수신을 시작합니다. 위치 권한 허용 후 호출하세요.
         /// </summary>
         public void StartGPS()
         {

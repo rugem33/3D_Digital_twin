@@ -36,11 +36,10 @@ GPS 값을 직접 읽는 컴포넌트는 아니며, `GPSLocationService.OnRawPos
 
 ```csharp
 [SerializeField] private GPSLocationService _gpsService;
-[SerializeField] private LocationPermissionHandler _permissionHandler;
 ```
 
 `_gpsService`는 GPS 수신과 좌표 변환을 담당합니다.
-`_permissionHandler`는 위치 권한 허용/거부 이벤트를 제공합니다.
+위치 권한 요청과 GPS 시작 타이밍 제어는 `FirstPersonGPSController` 내부에서 처리합니다.
 
 Inspector에 연결되어 있지 않으면 `ResolveDependencies()`에서 `FindAnyObjectByType()`로 자동 검색합니다.
 
@@ -157,23 +156,21 @@ private void Start()
 1. 현재 카메라 회전을 초기 목표 회전으로 저장합니다.
 2. 나침반과 자이로 센서를 초기화합니다.
 3. 의존성과 `CesiumGlobeAnchor`를 다시 확인합니다.
-4. `LocationPermissionHandler`가 있으면 권한 이벤트를 구독합니다.
-5. 이미 권한이 허용된 상태면 바로 GPS 추적을 시작합니다.
-6. 권한 핸들러가 없으면 GPS 추적을 바로 시작합니다.
+4. 위치 권한을 확인하거나 요청합니다.
+5. 권한이 허용되면 GPS 추적을 시작합니다.
 
 ## 권한과 GPS 시작
 
-권한 핸들러가 있으면 다음 이벤트를 구독합니다.
+`Start()`는 `RequestLocationPermissionThenStartGPS()`를 호출합니다.
 
 ```csharp
-_permissionHandler.OnPermissionGranted += OnPermissionGranted;
-_permissionHandler.OnPermissionDenied += OnPermissionDenied;
+RequestLocationPermissionThenStartGPS();
 ```
 
-권한이 허용되면 `OnPermissionGranted()`가 호출되고, 내부에서 `StartGPSTracking()`을 실행합니다.
+Android에서는 `Permission.FineLocation` 런타임 권한을 확인하거나 요청합니다. iOS에서는 `Input.location.Start()`로 시스템 권한 확인 흐름을 시작합니다.
 
 ```csharp
-private void OnPermissionGranted() => StartGPSTracking();
+Permission.RequestUserPermission(Permission.FineLocation, callbacks);
 ```
 
 `StartGPSTracking()`의 역할은 다음과 같습니다.
@@ -440,18 +437,15 @@ OnDestroy()
 
 GPS 관련 컴포넌트의 책임은 다음처럼 나뉩니다.
 
-- `LocationPermissionHandler`: 위치 권한 확보
 - `GPSLocationService`: GPS 수신, 위도/경도/고도 저장, Cesium/Unity 좌표 변환
-- `FirstPersonGPSController`: 변환된 위치 수신, 카메라 위치/방향 갱신, 지면 높이 보정, 건물 내부 보정
+- `FirstPersonGPSController`: 위치 권한 확보, GPS 시작 타이밍 제어, 변환된 위치 수신, 카메라 위치/방향 갱신, 지면 높이 보정, 건물 내부 보정
 - `MinimapController`: `FirstPersonGPSController`의 Transform을 따라가며 미니맵 표시
 
 연결 흐름은 다음과 같습니다.
 
 ```text
-LocationPermissionHandler
-  -> OnPermissionGranted
-
 FirstPersonGPSController
+  -> 위치 권한 허용 확인
   -> GPSLocationService.StartGPS()
   -> GPSLocationService.OnRawPositionUpdated 구독
 
