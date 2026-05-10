@@ -154,7 +154,10 @@ namespace Rugem.RoadTools.EditorTools
             string path = EditorUtility.OpenFilePanel("선 데이터 CSV 파일 선택", "", "csv");
             if (string.IsNullOrEmpty(path)) return;
 
-            string[] lines = File.ReadAllLines(path);
+            string[] lines;
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var sr = new StreamReader(fs, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
+                lines = sr.ReadToEnd().Split(new[] { "\r\n", "\r", "\n" }, System.StringSplitOptions.None);
             int totalLines  = lines.Length - 1;
             int successCount = 0;
 
@@ -217,7 +220,10 @@ namespace Rugem.RoadTools.EditorTools
 
             int minColumns = Mathf.Max(_latColumn, _lonColumn) + 1;
 
-            string[] lines = File.ReadAllLines(path);
+            string[] lines;
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var sr = new StreamReader(fs, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
+                lines = sr.ReadToEnd().Split(new[] { "\r\n", "\r", "\n" }, System.StringSplitOptions.None);
             int startLine   = _hasHeader ? 1 : 0;
             int totalLines  = lines.Length - startLine;
             int successCount = 0;

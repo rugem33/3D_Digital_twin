@@ -1,7 +1,9 @@
 {
   "dependencies": {
     "com.cesium.unity": "1.23.1",
+    "com.unity.2d.sprite": "1.0.0",
     "com.unity.ai.navigation": "2.0.12",
+    "com.unity.device-simulator.devices": "1.0.1",
     "com.unity.multiplayer.center": "1.0.1",
     "com.unity.modules.accessibility": "1.0.0",
     "com.unity.modules.adaptiveperformance": "1.0.0",

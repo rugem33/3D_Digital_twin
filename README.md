@@ -209,3 +209,68 @@ id, 시작위도, 시작경도, 종료위도, 종료경도, (기타), 갯수
 ```
 ..., 위도, 경도, ...   (열 인덱스는 Inspector에서 지정)
 ```
+---
+
+
+---
+
+## level2 씬 오브젝트 Hierarchy
+
+기준 씬: `Assets/level2.unity`
+
+현재 씬 오브젝트 수:
+
+- 전체 GameObject: `9,427`
+- 최상위 루트 GameObject: `3`
+- 주요 런타임 루트: `CesiumGeoreference`
+
+씬에는 도로 시설물 clone 오브젝트가 많이 포함되어 있습니다. README 가독성을 위해 반복 생성된 clone 오브젝트는 실제 부모 계층은 유지하되 개수로 요약했습니다.
+
+```text
+level2
+├── CesiumGeoreference (9,425 objects)
+│   ├── Cesium World Terrain
+│   ├── Directional Light
+│   ├── Main Camera (12 objects)
+│   │   ├── Minimap Service (8 objects)
+│   │   │   └── UI(Canvas) (7 objects)
+│   │   │       └── Minimap (6 objects)
+│   │   │           ├── CircleMask (2 objects)
+│   │   │           │   └── RawImage
+│   │   │           ├── FrameImage
+│   │   │           ├── North
+│   │   │           └── playerArrow
+│   │   └── Navigation Service (3 objects)
+│   │       └── Canvas (2 objects)
+│   │           └── UI(Canvas)
+│   ├── Road
+│   ├── Road Placer (9,407 objects)
+│   │   ├── [Type] 가로수 (550 objects)
+│   │   │   ├── 41 Line_* groups
+│   │   │   └── 509 Palm_Tree(Clone) instances
+│   │   └── [Type] 시설물 (8,856 objects)
+│   │       ├── 가로등: 8,576 Light Streetlight(Clone) instances
+│   │       └── 버스정류장: 277 Bus Stop(Clone) instances
+│   └── yuseonggu buildings (2 objects)
+│       └── building nameTag Manager
+├── EventSystem
+└── Mesh Assets
+```
+
+### 미니맵 Canvas 계층
+
+미니맵 UI는 `OnGUI`가 아니라 씬에 배치된 Canvas 오브젝트로 구현되어 있습니다.
+
+```text
+Main Camera
+└── Minimap Service
+    └── UI(Canvas)
+        └── Minimap
+            ├── CircleMask
+            │   └── RawImage
+            ├── FrameImage
+            ├── North
+            └── playerArrow
+```
+
+`MinimapController`는 런타임 미니맵 카메라와 `RenderTexture`를 생성한 뒤, 이 계층의 `RawImage` 오브젝트에 해당 텍스처를 연결합니다.
