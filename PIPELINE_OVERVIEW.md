@@ -1857,7 +1857,7 @@ dorohe
 현재 `level2.unity` 연결 기준에서 Kakao 장소 검색과 건물명 조회는 씬에 연결되어 있고, Kakao Directions는 스크립트는 존재하지만 `NavigationService._directionsService`에 연결되어 있지 않다. 따라서 경로 계산 런타임은 Kakao Directions 계층을 선택적으로 포함하되, 현재 씬에서는 NavMesh/Road Grid/직선 fallback 계층이 실제 경로 계산 축이다.
 
 ## 18. RoadTools C# 파일 내부 의존 관계 다이어그램
-아래 다이어그램은 `Assets/RoadTools` 아래의 `.cs` 파일만 대상으로 계산했다. 화살표 방향은 "앞 파일이 뒤 파일의 타입을 참조한다"는 의미이며, Unity/Cesium/Kakao/Editor API 같은 외부 패키지 의존성은 제외했다.
+아래 다이어그램은 현재 `Assets/RoadTools` 아래의 `.cs` 파일만 대상으로 다시 계산했다. 화살표 방향은 "앞 파일이 뒤 파일의 타입을 참조한다"는 의미이며, Unity/Cesium/Kakao/Editor API 같은 외부 패키지 의존성은 제외했다.
 
 ```mermaid
 flowchart LR
@@ -1875,6 +1875,10 @@ flowchart LR
     subgraph Navigation["Runtime / Navigation"]
         NavigationUIController["NavigationUIController.cs"]
         NavigationService["NavigationService.cs"]
+        NavigationCoordinator["NavigationCoordinator.cs"]
+        SearchProvider["SearchProvider.cs"]
+        RoutePresenter["RoutePresenter.cs"]
+        PositionProvider["PositionProvider.cs"]
         RouteRenderer["RouteRenderer.cs"]
         POIData["POIData.cs"]
     end
@@ -1903,16 +1907,25 @@ flowchart LR
     MinimapController --> FirstPersonGPSController
 
     NavigationUIController --> NavigationService
-    NavigationUIController --> RouteRenderer
-    NavigationUIController --> GPSLocationService
-    NavigationUIController --> KakaoPlaceSearchService
-    NavigationUIController --> MinimapController
-    NavigationUIController --> CameraNavAnchor
+    NavigationUIController --> NavigationCoordinator
     NavigationUIController --> POIData
 
-    NavigationService --> GPSLocationService
-    NavigationService --> FirstPersonGPSController
-    NavigationService --> CameraNavAnchor
+    NavigationCoordinator --> SearchProvider
+    NavigationCoordinator --> RoutePresenter
+    NavigationCoordinator --> PositionProvider
+    NavigationCoordinator --> POIData
+
+    SearchProvider --> KakaoPlaceSearchService
+    SearchProvider --> POIData
+
+    RoutePresenter --> RouteRenderer
+    RoutePresenter --> MinimapController
+
+    PositionProvider --> GPSLocationService
+    PositionProvider --> CameraNavAnchor
+    PositionProvider --> FirstPersonGPSController
+
+    NavigationService --> PositionProvider
     NavigationService --> KakaoDirectionsService
     NavigationService --> RoadAssetPlacer
     NavigationService --> POIData
@@ -1939,8 +1952,12 @@ flowchart LR
 | `Assets/RoadTools/Runtime/GPS/GPSLocationService.cs` | 없음 |
 | `Assets/RoadTools/Runtime/GPS/FirstPersonGPSController.cs` | `GPSLocationService.cs`, `MinimapController.cs` |
 | `Assets/RoadTools/Runtime/GPS/CameraNavAnchor.cs` | 없음 |
-| `Assets/RoadTools/Runtime/Navigation/NavigationUIController.cs` | `NavigationService.cs`, `RouteRenderer.cs`, `GPSLocationService.cs`, `KakaoPlaceSearchService.cs`, `MinimapController.cs`, `CameraNavAnchor.cs`, `POIData.cs` |
-| `Assets/RoadTools/Runtime/Navigation/NavigationService.cs` | `GPSLocationService.cs`, `FirstPersonGPSController.cs`, `CameraNavAnchor.cs`, `KakaoDirectionsService.cs`, `RoadAssetPlacer.cs`, `POIData.cs` |
+| `Assets/RoadTools/Runtime/Navigation/NavigationUIController.cs` | `NavigationService.cs`, `NavigationCoordinator.cs`, `POIData.cs` |
+| `Assets/RoadTools/Runtime/Navigation/NavigationCoordinator.cs` | `SearchProvider.cs`, `RoutePresenter.cs`, `PositionProvider.cs`, `POIData.cs` |
+| `Assets/RoadTools/Runtime/Navigation/SearchProvider.cs` | `KakaoPlaceSearchService.cs`, `POIData.cs` |
+| `Assets/RoadTools/Runtime/Navigation/RoutePresenter.cs` | `RouteRenderer.cs`, `MinimapController.cs` |
+| `Assets/RoadTools/Runtime/Navigation/PositionProvider.cs` | `GPSLocationService.cs`, `CameraNavAnchor.cs`, `FirstPersonGPSController.cs` |
+| `Assets/RoadTools/Runtime/Navigation/NavigationService.cs` | `PositionProvider.cs`, `KakaoDirectionsService.cs`, `RoadAssetPlacer.cs`, `POIData.cs` |
 | `Assets/RoadTools/Runtime/Navigation/RouteRenderer.cs` | `RoadAssetPlacer.cs` |
 | `Assets/RoadTools/Runtime/Navigation/POIData.cs` | 없음 |
 | `Assets/RoadTools/Runtime/Navigation/KakaoApi/KakaoApiKeyProvider.cs` | 없음 |
@@ -1951,8 +1968,9 @@ flowchart LR
 
 ### 18.2 내부 의존성 계산 요약
 
-- 총 대상 파일: 15개
+- 총 대상 파일: 19개
 - 내부 의존이 없는 파일: `iOSBuildPostProcessor.cs`, `RoadAssetPlacer.cs`, `GPSLocationService.cs`, `CameraNavAnchor.cs`, `POIData.cs`, `KakaoApiKeyProvider.cs`
-- 내부 의존이 가장 많은 파일: `NavigationUIController.cs` 7개, `NavigationService.cs` 6개
-- 순환 참조: `FirstPersonGPSController.cs`와 `MinimapController.cs`가 서로 참조한다.
-- 에디터에서 런타임을 참조하는 파일: `RoadAssetPlacerEditor.cs`가 `RoadAssetPlacer.cs`를 커스텀 인스펙터 대상으로 참조한다.
+- `NavigationUIController.cs` 직접 의존은 7개에서 3개로 감소했다: `NavigationService.cs`, `NavigationCoordinator.cs`, `POIData.cs`
+- `NavigationService.cs` 직접 의존은 6개에서 4개로 감소했다: `PositionProvider.cs`, `KakaoDirectionsService.cs`, `RoadAssetPlacer.cs`, `POIData.cs`
+- 위치 관련 의존(`GPSLocationService.cs`, `CameraNavAnchor.cs`, `FirstPersonGPSController.cs`)은 `PositionProvider.cs`로 이동했다.
+- 순환 참조는 아직 남아 있다: `FirstPersonGPSController.cs`와 `MinimapController.cs`가 서로 참조한다.

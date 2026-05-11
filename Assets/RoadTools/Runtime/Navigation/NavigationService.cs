@@ -10,10 +10,7 @@ namespace Rugem.RoadTools
     public class NavigationService : MonoBehaviour
     {
         [Header("의존성")]
-        [SerializeField] private GPSLocationService _gpsService;
-        [SerializeField] private FirstPersonGPSController _playerController;
-        [Tooltip("카메라 수직 하방 지형 지점을 추적하는 앵커. 없으면 GPS 스무딩 위치 폴백.")]
-        [SerializeField] private CameraNavAnchor _navAnchor;
+        [SerializeField] private PositionProvider _positionProvider;
 
         [Header("경로 설정")]
         [Tooltip("도착 판정 반경 (미터 — 수평 거리 기준)")]
@@ -83,10 +80,9 @@ namespace Rugem.RoadTools
 
         private void ResolveDependencies()
         {
-            if (_gpsService == null)
-                _gpsService = FindAnyObjectByType<GPSLocationService>();
-            if (_playerController == null)
-                _playerController = FindAnyObjectByType<FirstPersonGPSController>();
+            if (_positionProvider == null)
+                _positionProvider = FindAnyObjectByType<PositionProvider>();
+
             // API 키를 Resources에서 로드 (씬 파일 직렬화 방지)
             if (string.IsNullOrWhiteSpace(_kakaoRestApiKey))
             {
@@ -106,8 +102,6 @@ namespace Rugem.RoadTools
             {
                 _directionsService = FindAnyObjectByType<KakaoDirectionsService>();
             }
-            if (_navAnchor == null)
-                _navAnchor = FindAnyObjectByType<CameraNavAnchor>();
 
             if (_roadLayerMask == 0)
             {
@@ -172,9 +166,9 @@ namespace Rugem.RoadTools
             }
 
             ResolveDependencies();
-            if (_gpsService == null)
+            if (_positionProvider == null || !_positionProvider.IsReady)
             {
-                Debug.LogError("[NavService] GPSLocationService가 연결되지 않았습니다.");
+                Debug.LogError("[NavService] PositionProvider가 연결되지 않았습니다.");
                 return;
             }
 
@@ -183,7 +177,7 @@ namespace Rugem.RoadTools
             DistanceToDestination = -1f;
             _refreshTimer         = 0f;
 
-            _destinationWorldPos = _gpsService.ConvertToUnityPosition(poi.latitude, poi.longitude);
+            _destinationWorldPos = _positionProvider.ConvertToUnityPosition(poi.latitude, poi.longitude);
             DestinationWorldPos  = _destinationWorldPos;
             CalculateRoute();
             OnDestinationSet?.Invoke(poi);
@@ -196,10 +190,7 @@ namespace Rugem.RoadTools
             if (CurrentDestination == null) return;
 
             ResolveDependencies();
-            if (_playerController != null)
-                _playerController.TeleportTo(CurrentDestination.latitude, CurrentDestination.longitude);
-            else
-                Debug.LogWarning("[NavService] FirstPersonGPSController가 연결되지 않았습니다.");
+            _positionProvider?.TeleportTo(CurrentDestination.latitude, CurrentDestination.longitude);
         }
 
         /// <summary>경로 안내를 종료하고 상태를 초기화합니다.</summary>
@@ -220,13 +211,10 @@ namespace Rugem.RoadTools
 
         private void UpdateDistance()
         {
-            ResolveDependencies();
-            if (_gpsService == null) return;
+            if (_positionProvider == null) return;
 
-            Vector3 playerXZ = new Vector3(
-                _gpsService.SmoothedUnityPosition.x, 0f,
-                _gpsService.SmoothedUnityPosition.z);
-            Vector3 destXZ = new Vector3(_destinationWorldPos.x, 0f, _destinationWorldPos.z);
+            Vector3 playerXZ = new Vector3(_positionProvider.PlayerPosition.x, 0f, _positionProvider.PlayerPosition.z);
+            Vector3 destXZ   = new Vector3(_destinationWorldPos.x, 0f, _destinationWorldPos.z);
             DistanceToDestination = Vector3.Distance(playerXZ, destXZ);
         }
 
@@ -243,7 +231,7 @@ namespace Rugem.RoadTools
         private void CalculateRoute()
         {
             ResolveDependencies();
-            if (_gpsService == null) return;
+            if (_positionProvider == null) return;
 
             // 우선순위: 카카오 Directions API → 도로 메쉬 A* → NavMesh → 직선 폴백
             int requestId = _routeRequestId;
@@ -252,8 +240,8 @@ namespace Rugem.RoadTools
             if (_directionsService != null)
             {
                 _directionsService.RequestRoute(
-                    _gpsService.CurrentLatitude,  _gpsService.CurrentLongitude,
-                    destinationSnapshot.latitude,  destinationSnapshot.longitude,
+                    _positionProvider.CurrentLatitude,  _positionProvider.CurrentLongitude,
+                    destinationSnapshot.latitude,        destinationSnapshot.longitude,
                     (waypoints, error) =>
                     {
                         if (requestId != _routeRequestId || destinationSnapshot != CurrentDestination)
@@ -262,12 +250,8 @@ namespace Rugem.RoadTools
                         if (error == null && waypoints != null && waypoints.Length >= 2)
                         {
                             // 현재 위치 → 카카오 경로 시작점을 직선으로 보간
-                            Vector3 playerPos = (_navAnchor != null && _navAnchor.NavTransform != null)
-                                ? _navAnchor.NavTransform.position
-                                : _gpsService.SmoothedUnityPosition;
-
                             var fullRoute = new Vector3[waypoints.Length + 1];
-                            fullRoute[0] = playerPos;
+                            fullRoute[0] = _positionProvider.NavPosition;
                             System.Array.Copy(waypoints, 0, fullRoute, 1, waypoints.Length);
                             CurrentRoute = fullRoute;
                             OnRouteCalculated?.Invoke(destinationSnapshot, CurrentRoute);
@@ -287,12 +271,9 @@ namespace Rugem.RoadTools
 
         private void CalculateNavMeshRoute()
         {
-            if (_gpsService == null) return;
+            if (_positionProvider == null) return;
 
-            // mainCameraNav(지형 표면 정사영)를 시작점으로 우선 사용, 없으면 GPS 스무딩 위치 폴백
-            Vector3 startPos = (_navAnchor != null && _navAnchor.NavTransform != null)
-                ? _navAnchor.NavTransform.position
-                : _gpsService.SmoothedUnityPosition;
+            Vector3 startPos = _positionProvider.NavPosition;
 
             if (TryCalculateRoadMeshRoute(startPos, _destinationWorldPos, out Vector3[] roadRoute))
             {

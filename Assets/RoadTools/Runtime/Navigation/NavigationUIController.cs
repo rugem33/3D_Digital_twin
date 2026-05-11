@@ -6,12 +6,8 @@ namespace Rugem.RoadTools
     public class NavigationUIController : MonoBehaviour
     {
         [Header("의존성")]
-        [SerializeField] private NavigationService         _navService;
-        [SerializeField] private RouteRenderer             _routeRenderer;
-        [SerializeField] private GPSLocationService        _gpsService;
-        [SerializeField] private KakaoPlaceSearchService   _kakaoSearch;
-        [SerializeField] private MinimapController         _minimapController;
-        [SerializeField] private CameraNavAnchor           _navAnchor;
+        [SerializeField] private NavigationService      _navService;
+        [SerializeField] private NavigationCoordinator  _coordinator;
 
         [Header("UI 설정")]
         [SerializeField, Range(0.4f, 0.85f)] private float _searchPanelHeightRatio = 0.65f;
@@ -110,12 +106,8 @@ namespace Rugem.RoadTools
 
         private void ResolveDependencies()
         {
-            if (_navService        == null) _navService        = FindAnyObjectByType<NavigationService>();
-            if (_gpsService        == null) _gpsService        = FindAnyObjectByType<GPSLocationService>();
-            if (_routeRenderer     == null) _routeRenderer     = FindAnyObjectByType<RouteRenderer>();
-            if (_kakaoSearch       == null) _kakaoSearch       = FindAnyObjectByType<KakaoPlaceSearchService>();
-            if (_minimapController == null) _minimapController = FindAnyObjectByType<MinimapController>();
-            if (_navAnchor         == null) _navAnchor         = FindAnyObjectByType<CameraNavAnchor>();
+            if (_navService   == null) _navService   = FindAnyObjectByType<NavigationService>();
+            if (_coordinator  == null) _coordinator  = FindAnyObjectByType<NavigationCoordinator>();
         }
 
         private void OnEnable()
@@ -154,14 +146,8 @@ namespace Rugem.RoadTools
                 if (_arrivedTimer <= 0f) TransitionTo(NavUIState.None);
             }
 
-            if (_state == NavUIState.Navigating && _routeRenderer != null)
-            {
-                Vector3 navPos = _navAnchor?.NavTransform?.position
-                    ?? (Camera.main != null
-                        ? Camera.main.transform.position
-                        : (_gpsService != null ? _gpsService.SmoothedUnityPosition : Vector3.zero));
-                _routeRenderer.TrimFromPlayerPosition(navPos);
-            }
+            if (_state == NavUIState.Navigating)
+                _coordinator?.TrimRoute(_coordinator.NavPosition);
         }
 
         // ── OnGUI ────────────────────────────────────────────────────────────
@@ -184,7 +170,7 @@ namespace Rugem.RoadTools
         private void DrawSearchBar()
         {
             float margin  = Mathf.Clamp(Screen.width * 0.03f, 12f, 24f);
-            float mapSize = Screen.height * MinimapController.MapSizeRatioConst;
+            float mapSize = Screen.height * (_coordinator?.MapSizeRatioConst ?? 0f);
             float mapX    = Screen.width - mapSize - margin;
 
             float barH = Mathf.Clamp(Screen.height * 0.082f, 64f, 88f);
@@ -412,7 +398,7 @@ namespace Rugem.RoadTools
             GUI.DrawTexture(new Rect(mapX - 3, mapY - 3, mapSize + 6, mapSize + 6), Texture2D.whiteTexture);
             GUI.color = Color.white;
 
-            var rt = _minimapController?.OverviewTexture;
+            var rt = _coordinator?.OverviewTexture;
             if (rt != null)
             {
                 GUI.DrawTexture(mapRect, rt, ScaleMode.ScaleToFit, false);
@@ -445,9 +431,9 @@ namespace Rugem.RoadTools
             }
 
             // 마커
-            if (_gpsService != null && _playerMarkerTex != null)
+            if (_coordinator != null && _playerMarkerTex != null)
             {
-                Vector2 pm = GetMapPos(_gpsService.SmoothedUnityPosition, mapRect);
+                Vector2 pm = GetMapPos(_coordinator.PlayerPosition, mapRect);
                 float sz = mapSize * 0.055f;
                 DrawMapMarker(pm, sz + 4f, Color.black); DrawMapMarker(pm, sz, _playerMarkerTex);
             }
@@ -481,13 +467,13 @@ namespace Rugem.RoadTools
 
             if (GUI.Button(new Rect(margin + pad, btnY, btnW, btnH), "취소", _styleDangerBtn))
             {
-                _minimapController?.ExitOverviewMode();
+                _coordinator?.ExitOverviewMode();
                 _navService?.ClearNavigation();
                 TransitionTo(NavUIState.None);
             }
             if (GUI.Button(new Rect(margin + pad * 2f + btnW, btnY, btnW, btnH), "안내 시작", _styleNavStartBtn))
             {
-                _minimapController?.ExitOverviewMode();
+                _coordinator?.ExitOverviewMode();
                 TransitionTo(NavUIState.Navigating);
             }
         }
@@ -618,14 +604,8 @@ namespace Rugem.RoadTools
             return true;
         }
 
-        private Vector3 GetNavigationPosition()
-        {
-            if (_navAnchor != null && _navAnchor.NavTransform != null)
-                return _navAnchor.NavTransform.position;
-            if (Camera.main != null)
-                return Camera.main.transform.position;
-            return _gpsService != null ? _gpsService.SmoothedUnityPosition : Vector3.zero;
-        }
+        private Vector3 GetNavigationPosition() =>
+            _coordinator?.NavPosition ?? Vector3.zero;
 
         private static bool TryGetLookAheadRouteTarget(Vector3[] route, Vector3 player, float lookAhead, out Vector3 target, out float distanceToTarget)
         {
@@ -727,18 +707,18 @@ namespace Rugem.RoadTools
         // ── 이벤트 핸들러 ─────────────────────────────────────────────────────
 
         private void HandleRouteCalculated(POIData poi, Vector3[] route) =>
-            _routeRenderer?.ShowRoute(route);
+            _coordinator?.ShowRoute(route);
 
         private void HandleNavigationCleared()
         {
-            _routeRenderer?.HideRoute();
+            _coordinator?.HideRoute();
             if (_state == NavUIState.Navigating || _state == NavUIState.MapOverview)
                 TransitionTo(NavUIState.None);
         }
 
         private void HandleArrived()
         {
-            _routeRenderer?.HideRoute();
+            _coordinator?.HideRoute();
             _arrivedTimer = _arrivedDisplayDuration;
             TransitionTo(NavUIState.Arrived);
         }
@@ -759,10 +739,10 @@ namespace Rugem.RoadTools
             string query = _searchQuery.Trim();
             if (string.IsNullOrWhiteSpace(query)) return;
             _hasPendingSuggestionSearch = false; _showingRecents = false;
-            if (_kakaoSearch == null) { _searchResults = new List<POIData>(); _scrollPos = Vector2.zero; return; }
+            if (_coordinator == null) { _searchResults = new List<POIData>(); _scrollPos = Vector2.zero; return; }
             _isSearching = true; _searchError = null;
             int ver = ++_searchRequestVersion;
-            _kakaoSearch.Search(query, MaxSuggestionResults, SuggestionSearchRadiusMeters, (results, error) =>
+            _coordinator.Search(query, MaxSuggestionResults, SuggestionSearchRadiusMeters, (results, error) =>
             {
                 if (this == null || !isActiveAndEnabled || ver != _searchRequestVersion) return;
                 _isSearching = false;
@@ -804,9 +784,9 @@ namespace Rugem.RoadTools
             AddToRecentSearches(poi);
             _navService.SetDestination(poi);
             if (!_navService.IsNavigating) return;
-            Vector3 playerPos = _gpsService?.SmoothedUnityPosition ?? Vector3.zero;
+            Vector3 playerPos = _coordinator?.NavPosition           ?? Vector3.zero;
             Vector3 destPos   = _navService?.DestinationWorldPos   ?? Vector3.zero;
-            if (_minimapController != null) _minimapController.EnterOverviewMode(playerPos, destPos);
+            _coordinator?.EnterOverviewMode(playerPos, destPos);
             ComputeOverviewBounds(playerPos, destPos);
             TransitionTo(NavUIState.MapOverview);
         }
@@ -818,7 +798,7 @@ namespace Rugem.RoadTools
         // ── 오버뷰 헬퍼 ──────────────────────────────────────────────────────
 
         private Vector2 GetMapPos(Vector3 worldPos, Rect mapRect) =>
-            _minimapController != null
+            _coordinator != null && _coordinator.HasMinimap
                 ? WorldToMapPos(worldPos, mapRect)
                 : WorldToDiagramPos(worldPos, mapRect);
 
@@ -848,8 +828,8 @@ namespace Rugem.RoadTools
 
         private Vector2 WorldToMapPos(Vector3 worldPos, Rect mapRect)
         {
-            Vector3 cam = _minimapController.CurrentCamPosition;
-            float   sz  = _minimapController.CurrentOrthoSize;
+            Vector3 cam = _coordinator.MinimapCamPosition;
+            float   sz  = _coordinator.MinimapOrthoSize;
             float u = (worldPos.x - cam.x) / (2f * sz) + 0.5f;
             float v = 0.5f - (worldPos.z - cam.z) / (2f * sz);
             return new Vector2(mapRect.x + mapRect.width * Mathf.Clamp01(u),
