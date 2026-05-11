@@ -27,58 +27,53 @@
 
 | 기능 | 컴포넌트 | 관련 US |
 |------|----------|---------|
-| GPS → Unity 좌표 변환 (WGS84→ECEF→Unity, Lerp 보간) | `GPSLocationService` | US-04 |
-| 1인칭 카메라 GPS 동기화 + 눈높이 보정 (2m) | `FirstPersonGPSController` | US-05 |
-| 터치 기반 시점 조작 (자이로 / 고정 / 드래그 3모드, CircularMean 안정화) | `FirstPersonGPSController` | US-11 |
-| 조작 모드 심리스 전환 | `FirstPersonGPSController` | US-12 |
-| Cesium 지형 표면 높이 비동기 정밀 샘플링 | `FirstPersonGPSController` | US-16 |
-| GPS 고도 노이즈 차단 및 지면 높이 캐싱 (수평 2m 이동 임계) | `FirstPersonGPSController` | US-17 |
-| 건물 내부 침투 감지 및 인접 도로 위치 고정 | `FirstPersonGPSController` | US-18 |
-| 앱 백그라운드·포커스 복귀 시 AttitudeSensor 자동 재활성화 | `FirstPersonGPSController` | US-20 |
-| Android / iOS 위치 권한 요청 팝업 | `LocationPermissionHandler` | US-03 |
-| Cesium Ion 3D 타일 스트리밍 (크레딧 UI 제거) | 씬 설정 | US-01, US-02 |
-| 탑뷰 미니맵 (직교 카메라 RenderTexture) | `MinimapController` | US-19 |
-| CSV / JSON 좌표 기반 시설물 자동 배치 | `RoadAssetPlacer` | US-06, US-07 |
-| 시설물 타입별 가시성 On/Off | `RoadAssetPlacer` | US-08 |
-| NavMesh 경로 기반 가로수 자동 배치 | `RoadAssetPlacer` | US-07 |
-| 배치 메쉬 → 별도 순수 메쉬 오브젝트 분리 | `RoadAssetPlacer` | US-08 |
-| iOS Xcode Info.plist 위치 권한 자동 주입 | `iOSBuildPostProcessor` | US-03 |
-| POI 검색 + 목적지 설정 + NavMesh 경로 계산 | `NavigationService` | US-14 |
-| 도착 감지 (수평 15m 이내) + 경로 자동 재계산 | `NavigationService` | US-14 |
-| Kakao Mobility API 실도로 경로 연동 | `KakaoDirectionsService` | US-14 |
-| Kakao Local API POI 키워드 검색 | `KakaoPlaceSearchService` | US-14 |
-| 탐색 UI (목적지 검색, 지도 오버뷰, 방향 안내, 최근 검색 저장) | `NavigationUIController` | US-14, US-24 |
-| 3D 경로 시각화 (LineRenderer, 도로면 투영) | `RouteRenderer` | US-14 |
-| 건물 이름 레이블 (뷰포트 레이캐스트 + Kakao 역지오코딩) | `BuildingLabelManager` | — |
+| GPS 수신 및 WGS84 → ECEF → Unity 좌표 변환 | `GPSLocationService` | US-04 |
+| GPS 위치 Lerp 보간 및 현재 좌표 상태 제공 | `GPSLocationService`, `PositionProvider` | US-04 |
+| 1인칭 카메라 GPS 동기화 + 지면 기준 눈높이 보정 | `FirstPersonGPSController` | US-05 |
+| 자이로 / 고정 / 드래그 3가지 회전 모드 전환 | `FirstPersonGPSController` | US-11, US-12 |
+| 나침반 평균화, GPS 점프 필터, 앱 복귀 시 센서 재활성화 | `FirstPersonGPSController` | US-17, US-20 |
+| Cesium 지형 높이 비동기 샘플링 및 Raycast 폴백 | `FirstPersonGPSController` | US-16 |
+| 건물 내부 진입 감지 후 인접 도로 위치로 보정 | `FirstPersonGPSController` | US-18 |
+| Android / iOS 위치 권한 요청 및 GPS 시작 제어 | `FirstPersonGPSController`, `iOSBuildPostProcessor` | US-03 |
+| 카카오 장소 키워드 검색, 현재 위치 반경 검색, 최근 검색 저장 | `KakaoPlaceSearchService`, `NavigationUIController` | US-14, US-24 |
+| 목적지 설정, 도착 감지, 주기적 경로 재계산 | `NavigationService` | US-14 |
+| 카카오 실도로 경로 → 도로 메쉬 A* → NavMesh → 직선 폴백 | `NavigationService`, `KakaoDirectionsService` | US-14 |
+| UI, 경로 시각화, 미니맵을 묶는 내비게이션 진입점 | `NavigationCoordinator`, `RoutePresenter` | US-14, US-24 |
+| LineRenderer 기반 3D 경로 표시, 도로/지형 높이 스냅, 지나간 구간 제거 | `RouteRenderer` | US-14 |
+| RenderTexture 기반 탑뷰 미니맵 및 목적지 오버뷰 모드 | `MinimapController` | US-19, US-22 |
+| CSV 기반 점/선 시설물 배치, 타입별 가시성 제어, 메쉬 분리 | `RoadAssetPlacer`, `RoadAssetPlacerEditor` | US-06, US-07, US-08, US-21 |
+| Cesium 크레딧 UI 커스터마이징 | `MyCesiumCreditSystemUI.uxml` | US-01, US-02 |
 
 ---
 
 ## 아키텍처
 
 ```
-          디바이스 (Android / iOS)
-    GPS · AttitudeSensor · Touchscreen
-                    │
-┌───────────────────▼──────────────────────────────────────┐
-│  Presentation Layer                                      │
-│  FirstPersonGPSController   MinimapController            │
-│  NavigationUIController     BuildingLabelManager         │
-│                                                          │
-└────────────┬─────────────────────────────┬───────────────┘
-             │                             │
-┌────────────▼──────────────┐  ┌───────────▼─────────────┐W
-│  Application Layer        │  │  External Services      │
-│  GPSLocationService       │  │  KakaoDirectionsService │
-│  NavigationService        │◄─┤  KakaoPlaceSearchService│
-│  RouteRenderer            │  │  (Kakao 지도 REST API)  │
-│  RoadAssetPlacer          │  └─────────────────────────┘
-└────────────┬──────────────┘
-             │
-┌────────────▼──────────────────────────────────────────────┐
-│  Infrastructure Layer (Cesium for Unity)                  │
-│  CesiumGeoreference   Cesium3DTileset  (Cesium Ion 스트림)│
-│  CesiumGlobeAnchor    NavMeshSurface                      │
-└───────────────────────────────────────────────────────────┘
+          Device Layer (Android / iOS)
+      GPS · Compass · AttitudeSensor · Touchscreen
+                         │
+┌────────────────────────▼────────────────────────┐
+│ Presentation Layer                              │
+│ NavigationUIController  MinimapController       │
+│ FirstPersonGPSController                        │
+└───────────────┬──────────────────────┬─────────┘
+                │                      │
+┌───────────────▼──────────────────────▼─────────┐
+│ Application Layer                              │
+│ NavigationCoordinator  NavigationService       │
+│ RoutePresenter         RouteRenderer           │
+│ PositionProvider       GPSLocationService      │
+└───────────────┬──────────────────────┬─────────┘
+                │                      │
+┌───────────────▼────────────┐ ┌───────▼──────────────┐
+│ Cesium / Unity Infra       │ │ External API          │
+│ CesiumGeoreference         │ │ KakaoDirectionsService│
+│ CesiumGlobeAnchor          │ │ KakaoPlaceSearchService│
+│ Cesium3DTileset, NavMesh   │ │ KakaoApiKeyProvider   │
+└────────────────────────────┘ └──────────────────────┘
+
+Editor Tools
+RoadAssetPlacerEditor → RoadAssetPlacer → CSV 시설물 배치 / 타입별 표시 제어
 ```
 
 ### GPS 좌표 변환 파이프라인
@@ -86,35 +81,67 @@
 ```
 GPS 수신 (WGS84: 위도, 경도, 고도)
   ↓
+GPSLocationService.GPSUpdateLoop()
+  ↓
 CesiumWgs84Ellipsoid.LongitudeLatitudeHeightToEarthCenteredEarthFixed()
   ↓
 ECEF (지구 중심 고정 좌표계)
   ↓
 CesiumGeoreference.TransformEarthCenteredEarthFixedPositionToUnity()
   ↓
-Unity 월드 좌표 (Vector3)
+Unity 월드 좌표 (TargetUnityPosition)
   ↓
-Vector3.Lerp() 보간 (speed=8) → 카메라 떨림 방지
+GPSLocationService.Update()에서 SmoothedUnityPosition Lerp 보간
   ↓
-Cesium SampleHeightMostDetailed() 비동기 → 지면 Y 캐싱
+OnRawPositionUpdated(rawUnityPosition) 이벤트
   ↓
-카메라 최종 위치 = (X, 지면Y + 눈높이 2m, Z)
+FirstPersonGPSController.OnGPSPositionUpdated()
+  ↓
+Cesium3DTileset.SampleHeightMostDetailed()로 지형 높이 샘플링
+  ↓ 실패 시
+Physics.Raycast()로 지면 높이 폴백
+  ↓
+카메라 목표 위치 = (GPS X/Z, 지면Y + eyeHeight)
+  ↓
+CesiumGlobeAnchor Transform에 Lerp 적용
 ```
 
 ### 경로 안내 파이프라인
 
 ```
-사용자 목적지 선택 (POI 검색 / Kakao 장소 검색)
+사용자 검색어 입력
   ↓
-KakaoDirectionsService — 실도로 Waypoints 취득
-  ↓ (실패 시 NavMesh 직접 탐색으로 폴백)
-NavigationService.CalculatePath() — NavMesh 구간 세분화
+NavigationUIController → NavigationCoordinator.Search()
   ↓
-RouteRenderer — 각 구간 도로 메쉬 Raycast → 지면 Y 보정
+KakaoPlaceSearchService.Search()
+  ↓
+POIData 목록 표시 및 최근 검색 저장
+  ↓
+사용자 목적지 선택
+  ↓
+NavigationService.SetDestination(POIData)
+  ↓
+NavigationService.CalculateRoute()
+  ├─ 1순위: KakaoDirectionsService 실도로 vertexes 취득
+  ├─ 2순위: Road 레이어 콜라이더 기반 도로 메쉬 A* 탐색
+  ├─ 3순위: NavMesh.CalculatePath()
+  └─ 4순위: 출발지-목적지 직선 경로
+  ↓
+OnRouteCalculated(POIData, Vector3[])
+  ↓
+RoutePresenter.ShowRoute()
+  ↓
+RouteRenderer.ShowRoute()
+  ├─ 구간별 NavMesh corner 보정
+  ├─ Road/terrain Raycast로 Y 좌표 스냅
+  └─ 목적지 마커 생성
   ↓
 LineRenderer 3D 경로 표시
   ↓
-도착 판정 (수평 거리 15m 이내) → OnArrived 이벤트
+NavigationService.Update()
+  ├─ 10초 주기 경로 재계산
+  ├─ 수평 거리 15m 이내 도착 판정
+  └─ OnArrived 이벤트 → UI Arrived 상태
 ```
 
 ---
@@ -125,15 +152,19 @@ LineRenderer 3D 경로 표시
 Assets/
 └── RoadTools/
     ├── Runtime/
+    │   ├── CesiumCredit/
+    │   │   └── MyCesiumCreditSystemUI.uxml  # Cesium Credit UI 커스터마이징
     │   ├── GPS/
     │   │   ├── GPSLocationService.cs          # US-04  WGS84→ECEF→Unity 변환 + Lerp 보간
     │   │   ├── FirstPersonGPSController.cs    # US-05,11,12,16,17,18,20  1인칭 카메라·터치 시점 조작
-    │   │   ├── LocationPermissionHandler.cs   # US-03  Android/iOS 위치 권한 요청
     │   │   └── CameraNavAnchor.cs             # 카메라 수직 하방 지면 앵커 (경로 계산 기준점)
     │   ├── Navigation/
-    │   │   ├── NavigationService.cs           # US-14  POI 검색·NavMesh 경로 계산·도착 감지
-    │   │   ├── NavigationUIController.cs      # US-14,24  목적지 검색 UI·오버뷰·방향 안내
-    │   │   ├── RouteRenderer.cs               # US-14  3D 경로 LineRenderer (도로면 Raycast 투영)
+    │   │   ├── NavigationCoordinator.cs       # UI에서 검색·경로·오버뷰 기능을 호출하는 단일 진입점
+    │   │   ├── NavigationService.cs           # US-14  목적지 설정·경로 계산·도착 감지
+    │   │   ├── NavigationUIController.cs      # US-14,24  검색·오버뷰·안내·도착 UI 상태 관리
+    │   │   ├── PositionProvider.cs            # GPS/카메라 앵커 기반 현재 위치 제공
+    │   │   ├── RoutePresenter.cs              # RouteRenderer와 MinimapController 연결
+    │   │   ├── RouteRenderer.cs               # US-14  3D 경로 LineRenderer 및 도로/지형 스냅
     │   │   ├── POIData.cs                     # POI 데이터 구조체
     │   │   └── KakaoApi/
     │   │       ├── KakaoApiKeyProvider.cs     # Resources/kakao_api_key.txt 런타임 로드
@@ -141,13 +172,11 @@ Assets/
     │   │       └── KakaoPlaceSearchService.cs # Kakao Local API 키워드 POI 검색
     │   ├── Minimap/
     │   │   └── MinimapController.cs           # US-19,22  탑뷰 미니맵 (RenderTexture + 전체 지도)
-    │   ├── RoadAssetPlacer/
-    │   │   └── RoadAssetPlacer.cs             # US-06,07,08,21  CSV 기반 시설물 자동 배치·컬링
-    │   ├── BuildingLabel/
-    │   │   └── BuildingLabelManager.cs        # 뷰포트 레이캐스트 + Kakao 역지오코딩 건물 레이블
-    │   └── Rugem.RoadTools.Runtime.asmdef
     └── Editor/
-        ├── RoadAssetPlacerEditor.cs           # Inspector CSV 배치 UI
+        ├── RoadAssetPlacer/
+        │   ├── RoadAssetPlacer.cs             # US-06,07,08,21  CSV 기반 시설물 자동 배치·타입별 표시 제어
+        │   └── Rugem.RoadTools.Runtime.asmdef # RoadAssetPlacer 전용 asmdef
+        ├── RoadAssetPlacerEditor.cs           # Inspector CSV 배치·메쉬 분리 UI
         ├── iOSBuildPostProcessor.cs           # US-23  iOS Info.plist 위치 권한 자동 주입
         └── Rugem.RoadTools.Editor.asmdef
 ```
