@@ -1855,3 +1855,159 @@ dorohe
 ```
 
 현재 `level2.unity` 연결 기준에서 Kakao 장소 검색과 건물명 조회는 씬에 연결되어 있고, Kakao Directions는 스크립트는 존재하지만 `NavigationService._directionsService`에 연결되어 있지 않다. 따라서 경로 계산 런타임은 Kakao Directions 계층을 선택적으로 포함하되, 현재 씬에서는 NavMesh/Road Grid/직선 fallback 계층이 실제 경로 계산 축이다.
+
+## 18. 전체 C# 파일 의존 관계 다이어그램
+아래 다이어그램은 `Assets` 아래의 모든 `.cs` 파일을 기준으로 정리했다. 화살표 방향은 "앞 파일이 뒤 파일/외부 기능을 사용한다"는 의미다. Unity 기본 타입, UnityEditor, Cesium, Kakao REST API처럼 프로젝트 내부 C# 파일이 아닌 의존성은 별도 외부 노드로 묶었다.
+
+```mermaid
+flowchart LR
+    subgraph Tutorial["TutorialInfo"]
+        Readme["Readme.cs"]
+        ReadmeEditor["ReadmeEditor.cs"]
+    end
+
+    subgraph Editor["RoadTools Editor"]
+        RoadAssetPlacerEditor["RoadAssetPlacerEditor.cs"]
+        IOSBuildPostProcessor["iOSBuildPostProcessor.cs"]
+    end
+
+    subgraph RuntimeGPS["Runtime / GPS & Camera"]
+        GPSLocationService["GPSLocationService.cs"]
+        FirstPersonGPSController["FirstPersonGPSController.cs"]
+        CameraNavAnchor["CameraNavAnchor.cs"]
+    end
+
+    subgraph RuntimeNavigation["Runtime / Navigation"]
+        NavigationUIController["NavigationUIController.cs"]
+        NavigationService["NavigationService.cs"]
+        RouteRenderer["RouteRenderer.cs"]
+        POIData["POIData.cs"]
+    end
+
+    subgraph RuntimeKakao["Runtime / Kakao API"]
+        KakaoPlaceSearchService["KakaoPlaceSearchService.cs"]
+        KakaoDirectionsService["KakaoDirectionsService.cs"]
+        KakaoApiKeyProvider["KakaoApiKeyProvider.cs"]
+    end
+
+    subgraph RuntimeView["Runtime / Map & Labels"]
+        MinimapController["MinimapController.cs"]
+        BuildingLabelManager["BuildingLabelManager.cs"]
+    end
+
+    subgraph RuntimePlacement["Runtime / Placement"]
+        RoadAssetPlacer["RoadAssetPlacer.cs"]
+    end
+
+    subgraph External["External / Package / Platform"]
+        UnityRuntime["Unity Runtime\nMonoBehaviour, GameObject, Transform,\nCamera, UI, Coroutine, Physics, Input"]
+        UnityEditorAPI["UnityEditor\nCustomEditor, AssetDatabase, Undo,\nBuildPostProcess, PlistDocument"]
+        UnityNavMesh["Unity AI Navigation\nNavMesh, NavMeshPath, NavMeshSurface"]
+        CesiumUnity["Cesium for Unity\nCesiumGeoreference, Cesium3DTileset,\nCesiumGlobeAnchor, CesiumCameraManager"]
+        KakaoLocalAPI["Kakao Local REST API\nkeyword search, coord2address"]
+        KakaoMobilityAPI["Kakao Mobility REST API\ndirections"]
+        DeviceOS["Device / OS\nGPS, Compass, Gyro, Android/iOS permission"]
+        ResourcesFile["Assets/Resources/kakao_api_key.txt"]
+    end
+
+    ReadmeEditor --> Readme
+    ReadmeEditor --> UnityEditorAPI
+    Readme --> UnityRuntime
+
+    RoadAssetPlacerEditor --> RoadAssetPlacer
+    RoadAssetPlacerEditor --> UnityEditorAPI
+    IOSBuildPostProcessor --> UnityEditorAPI
+
+    GPSLocationService --> CesiumUnity
+    GPSLocationService --> DeviceOS
+    GPSLocationService --> UnityRuntime
+
+    FirstPersonGPSController --> GPSLocationService
+    FirstPersonGPSController --> MinimapController
+    FirstPersonGPSController --> CesiumUnity
+    FirstPersonGPSController --> DeviceOS
+    FirstPersonGPSController --> UnityRuntime
+
+    CameraNavAnchor --> UnityRuntime
+
+    NavigationUIController --> NavigationService
+    NavigationUIController --> RouteRenderer
+    NavigationUIController --> GPSLocationService
+    NavigationUIController --> KakaoPlaceSearchService
+    NavigationUIController --> MinimapController
+    NavigationUIController --> CameraNavAnchor
+    NavigationUIController --> POIData
+    NavigationUIController --> UnityRuntime
+
+    NavigationService --> GPSLocationService
+    NavigationService --> FirstPersonGPSController
+    NavigationService --> CameraNavAnchor
+    NavigationService --> KakaoDirectionsService
+    NavigationService --> RoadAssetPlacer
+    NavigationService --> POIData
+    NavigationService --> UnityNavMesh
+    NavigationService --> UnityRuntime
+
+    RouteRenderer --> RoadAssetPlacer
+    RouteRenderer --> UnityNavMesh
+    RouteRenderer --> UnityRuntime
+
+    POIData --> UnityRuntime
+
+    KakaoPlaceSearchService --> GPSLocationService
+    KakaoPlaceSearchService --> KakaoApiKeyProvider
+    KakaoPlaceSearchService --> POIData
+    KakaoPlaceSearchService --> KakaoLocalAPI
+    KakaoPlaceSearchService --> UnityRuntime
+
+    KakaoDirectionsService --> GPSLocationService
+    KakaoDirectionsService --> KakaoApiKeyProvider
+    KakaoDirectionsService --> KakaoMobilityAPI
+    KakaoDirectionsService --> UnityRuntime
+
+    KakaoApiKeyProvider --> ResourcesFile
+    KakaoApiKeyProvider --> UnityRuntime
+
+    MinimapController --> GPSLocationService
+    MinimapController --> FirstPersonGPSController
+    MinimapController --> CesiumUnity
+    MinimapController --> UnityRuntime
+
+    BuildingLabelManager --> KakaoApiKeyProvider
+    BuildingLabelManager --> KakaoLocalAPI
+    BuildingLabelManager --> CesiumUnity
+    BuildingLabelManager --> UnityRuntime
+
+    RoadAssetPlacer --> CesiumUnity
+    RoadAssetPlacer --> UnityNavMesh
+    RoadAssetPlacer --> UnityRuntime
+```
+
+### 18.1 파일별 핵심 의존 요약
+
+| C# 파일 | 내부 의존 | 외부/플랫폼 의존 |
+|---|---|---|
+| `Assets/TutorialInfo/Scripts/Readme.cs` | 없음 | Unity `ScriptableObject` |
+| `Assets/TutorialInfo/Scripts/Editor/ReadmeEditor.cs` | `Readme.cs` | UnityEditor, AssetDatabase, SessionState |
+| `Assets/RoadTools/Editor/RoadAssetPlacerEditor.cs` | `RoadAssetPlacer.cs` | UnityEditor, CSV 파일 읽기, Undo |
+| `Assets/RoadTools/Editor/iOSBuildPostProcessor.cs` | 없음 | UnityEditor iOS build postprocess, `Info.plist` |
+| `Assets/RoadTools/Runtime/GPS/GPSLocationService.cs` | 없음 | Cesium 좌표 변환, Unity location service |
+| `Assets/RoadTools/Runtime/GPS/FirstPersonGPSController.cs` | `GPSLocationService.cs`, `MinimapController.cs` | Cesium camera/globe anchor, terrain height, device compass/gyro, Physics |
+| `Assets/RoadTools/Runtime/GPS/CameraNavAnchor.cs` | 없음 | Unity Camera, Transform, Physics Raycast |
+| `Assets/RoadTools/Runtime/Navigation/NavigationUIController.cs` | `NavigationService.cs`, `RouteRenderer.cs`, `GPSLocationService.cs`, `KakaoPlaceSearchService.cs`, `MinimapController.cs`, `CameraNavAnchor.cs`, `POIData.cs` | Unity IMGUI, PlayerPrefs |
+| `Assets/RoadTools/Runtime/Navigation/NavigationService.cs` | `GPSLocationService.cs`, `FirstPersonGPSController.cs`, `CameraNavAnchor.cs`, `KakaoDirectionsService.cs`, `RoadAssetPlacer.cs`, `POIData.cs` | Unity NavMesh, Physics |
+| `Assets/RoadTools/Runtime/Navigation/RouteRenderer.cs` | `RoadAssetPlacer.cs` | Unity LineRenderer, NavMesh, Physics |
+| `Assets/RoadTools/Runtime/Navigation/POIData.cs` | 없음 | Unity serialization |
+| `Assets/RoadTools/Runtime/Navigation/KakaoApi/KakaoPlaceSearchService.cs` | `GPSLocationService.cs`, `KakaoApiKeyProvider.cs`, `POIData.cs` | Kakao Local keyword API, UnityWebRequest |
+| `Assets/RoadTools/Runtime/Navigation/KakaoApi/KakaoDirectionsService.cs` | `GPSLocationService.cs`, `KakaoApiKeyProvider.cs` | Kakao Mobility directions API, UnityWebRequest |
+| `Assets/RoadTools/Runtime/Navigation/KakaoApi/KakaoApiKeyProvider.cs` | 없음 | `Resources/kakao_api_key.txt`, Unity Resources |
+| `Assets/RoadTools/Runtime/Minimap/MinimapController.cs` | `GPSLocationService.cs`, `FirstPersonGPSController.cs` | CesiumCameraManager, Unity Camera, RenderTexture, UI |
+| `Assets/RoadTools/Runtime/BuildingLabel/BuildingLabelManager.cs` | `KakaoApiKeyProvider.cs` | Kakao Local coord2address API, CesiumGeoreference, Physics, IMGUI |
+| `Assets/RoadTools/Runtime/RoadAssetPlacer/RoadAssetPlacer.cs` | 없음 | CesiumGeoreference, CesiumGlobeAnchor, NavMeshSurface, NavMesh, Physics |
+
+### 18.2 런타임 순환/상호 참조 포인트
+
+- `FirstPersonGPSController.cs`는 미니맵 버튼 배치를 위해 `MinimapController.MapSizeRatioConst`를 참조하고, `MinimapController.cs`는 추적 대상을 찾기 위해 `FirstPersonGPSController`를 참조한다. 즉 두 파일은 약한 상호 참조가 있다.
+- `NavigationUIController.cs`는 UI 허브 역할을 하며 검색, 경로 계산, 경로 렌더링, 미니맵 overview, 카메라 기준점을 모두 연결한다.
+- `NavigationService.cs`는 경로 계산 허브 역할을 하며 `KakaoDirectionsService`가 있으면 Kakao Mobility 경로를 우선 시도하고, 실패하거나 연결되지 않으면 NavMesh/Road Grid/직선 fallback을 사용한다.
+- `KakaoApiKeyProvider.cs`는 Kakao 검색, Kakao 길찾기, 건물명 조회가 공유하는 API 키 진입점이다.
