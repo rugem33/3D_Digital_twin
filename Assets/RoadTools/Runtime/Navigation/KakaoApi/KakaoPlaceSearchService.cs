@@ -25,31 +25,21 @@ namespace Rugem.RoadTools
         [Tooltip("요청 타임아웃 (초)")]
         [SerializeField] private int _timeoutSeconds = 10;
 
-        [Header("의존성")]
-        [SerializeField] private GPSLocationService _gpsService;
-
         private const string Endpoint = "https://dapi.kakao.com/v2/local/search/keyword.json";
-
-        // ── 생명주기 ────────────────────────────────────────────────────────────
-
-        private void Awake()
-        {
-            if (_gpsService == null)
-                _gpsService = FindAnyObjectByType<GPSLocationService>();
-        }
 
         // ── 공개 API ────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// 키워드로 주변 장소를 검색합니다.
+        /// 키워드로 주변 장소를 검색합니다. 위치 미제공 시 정확도순 검색.
         /// onComplete(results, errorMessage) — 성공 시 errorMessage == null
         /// </summary>
         public void Search(string query, Action<List<POIData>, string> onComplete)
         {
-            Search(query, _pageSize, _searchRadius, onComplete);
+            Search(query, _pageSize, _searchRadius, 0.0, 0.0, onComplete);
         }
 
-        public void Search(string query, int maxResults, int radiusMeters, Action<List<POIData>, string> onComplete)
+        public void Search(string query, int maxResults, int radiusMeters, double lat, double lon,
+            Action<List<POIData>, string> onComplete)
         {
             string apiKey = KakaoApiKeyProvider.Resolve(_restApiKey);
             if (string.IsNullOrWhiteSpace(apiKey))
@@ -64,8 +54,6 @@ namespace Rugem.RoadTools
                 return;
             }
 
-            double lat = _gpsService != null ? _gpsService.CurrentLatitude  : 0.0;
-            double lon = _gpsService != null ? _gpsService.CurrentLongitude : 0.0;
             int pageSize = Mathf.Clamp(maxResults, 1, 15);
             int radius   = Mathf.Clamp(radiusMeters, 1, 20000);
             StartCoroutine(SearchCoroutine(query.Trim(), lat, lon, pageSize, radius, onComplete));
