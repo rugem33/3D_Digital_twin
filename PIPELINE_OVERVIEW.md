@@ -1864,6 +1864,7 @@ flowchart LR
     subgraph Editor["Editor"]
         RoadAssetPlacerEditor["RoadAssetPlacerEditor.cs"]
         IOSBuildPostProcessor["iOSBuildPostProcessor.cs"]
+        RoadAssetPlacer["RoadAssetPlacer.cs"]
     end
 
     subgraph GPS["Runtime / GPS"]
@@ -1876,7 +1877,6 @@ flowchart LR
         NavigationUIController["NavigationUIController.cs"]
         NavigationService["NavigationService.cs"]
         NavigationCoordinator["NavigationCoordinator.cs"]
-        SearchProvider["SearchProvider.cs"]
         RoutePresenter["RoutePresenter.cs"]
         PositionProvider["PositionProvider.cs"]
         RouteRenderer["RouteRenderer.cs"]
@@ -1891,11 +1891,6 @@ flowchart LR
 
     subgraph View["Runtime / View"]
         MinimapController["MinimapController.cs"]
-        BuildingLabelManager["BuildingLabelManager.cs"]
-    end
-
-    subgraph Placement["Runtime / RoadAssetPlacer"]
-        RoadAssetPlacer["RoadAssetPlacer.cs"]
     end
 
     RoadAssetPlacerEditor --> RoadAssetPlacer
@@ -1910,13 +1905,10 @@ flowchart LR
     NavigationUIController --> NavigationCoordinator
     NavigationUIController --> POIData
 
-    NavigationCoordinator --> SearchProvider
+    NavigationCoordinator --> KakaoPlaceSearchService
     NavigationCoordinator --> RoutePresenter
     NavigationCoordinator --> PositionProvider
     NavigationCoordinator --> POIData
-
-    SearchProvider --> KakaoPlaceSearchService
-    SearchProvider --> POIData
 
     RoutePresenter --> RouteRenderer
     RoutePresenter --> MinimapController
@@ -1927,19 +1919,15 @@ flowchart LR
 
     NavigationService --> PositionProvider
     NavigationService --> KakaoDirectionsService
-    NavigationService --> RoadAssetPlacer
+    NavigationService --> KakaoApiKeyProvider
     NavigationService --> POIData
 
     RouteRenderer --> RoadAssetPlacer
 
-    KakaoPlaceSearchService --> GPSLocationService
     KakaoPlaceSearchService --> KakaoApiKeyProvider
     KakaoPlaceSearchService --> POIData
 
-    KakaoDirectionsService --> GPSLocationService
     KakaoDirectionsService --> KakaoApiKeyProvider
-
-    BuildingLabelManager --> KakaoApiKeyProvider
 ```
 
 ### 18.1 파일별 내부 의존 목록
@@ -1948,29 +1936,30 @@ flowchart LR
 |---|---|
 | `Assets/RoadTools/Editor/RoadAssetPlacerEditor.cs` | `RoadAssetPlacer.cs` |
 | `Assets/RoadTools/Editor/iOSBuildPostProcessor.cs` | 없음 |
-| `Assets/RoadTools/Runtime/RoadAssetPlacer/RoadAssetPlacer.cs` | 없음 |
+| `Assets/RoadTools/Editor/RoadAssetPlacer/RoadAssetPlacer.cs` | 없음 |
 | `Assets/RoadTools/Runtime/GPS/GPSLocationService.cs` | 없음 |
 | `Assets/RoadTools/Runtime/GPS/FirstPersonGPSController.cs` | `GPSLocationService.cs`, `MinimapController.cs` |
 | `Assets/RoadTools/Runtime/GPS/CameraNavAnchor.cs` | 없음 |
 | `Assets/RoadTools/Runtime/Navigation/NavigationUIController.cs` | `NavigationService.cs`, `NavigationCoordinator.cs`, `POIData.cs` |
-| `Assets/RoadTools/Runtime/Navigation/NavigationCoordinator.cs` | `SearchProvider.cs`, `RoutePresenter.cs`, `PositionProvider.cs`, `POIData.cs` |
-| `Assets/RoadTools/Runtime/Navigation/SearchProvider.cs` | `KakaoPlaceSearchService.cs`, `POIData.cs` |
+| `Assets/RoadTools/Runtime/Navigation/NavigationCoordinator.cs` | `KakaoPlaceSearchService.cs`, `RoutePresenter.cs`, `PositionProvider.cs`, `POIData.cs` |
 | `Assets/RoadTools/Runtime/Navigation/RoutePresenter.cs` | `RouteRenderer.cs`, `MinimapController.cs` |
 | `Assets/RoadTools/Runtime/Navigation/PositionProvider.cs` | `GPSLocationService.cs`, `CameraNavAnchor.cs`, `FirstPersonGPSController.cs` |
-| `Assets/RoadTools/Runtime/Navigation/NavigationService.cs` | `PositionProvider.cs`, `KakaoDirectionsService.cs`, `RoadAssetPlacer.cs`, `POIData.cs` |
+| `Assets/RoadTools/Runtime/Navigation/NavigationService.cs` | `PositionProvider.cs`, `KakaoDirectionsService.cs`, `KakaoApiKeyProvider.cs`, `POIData.cs` |
 | `Assets/RoadTools/Runtime/Navigation/RouteRenderer.cs` | `RoadAssetPlacer.cs` |
 | `Assets/RoadTools/Runtime/Navigation/POIData.cs` | 없음 |
 | `Assets/RoadTools/Runtime/Navigation/KakaoApi/KakaoApiKeyProvider.cs` | 없음 |
-| `Assets/RoadTools/Runtime/Navigation/KakaoApi/KakaoDirectionsService.cs` | `GPSLocationService.cs`, `KakaoApiKeyProvider.cs` |
-| `Assets/RoadTools/Runtime/Navigation/KakaoApi/KakaoPlaceSearchService.cs` | `GPSLocationService.cs`, `KakaoApiKeyProvider.cs`, `POIData.cs` |
+| `Assets/RoadTools/Runtime/Navigation/KakaoApi/KakaoDirectionsService.cs` | `KakaoApiKeyProvider.cs` |
+| `Assets/RoadTools/Runtime/Navigation/KakaoApi/KakaoPlaceSearchService.cs` | `KakaoApiKeyProvider.cs`, `POIData.cs` |
 | `Assets/RoadTools/Runtime/Minimap/MinimapController.cs` | `GPSLocationService.cs`, `FirstPersonGPSController.cs` |
-| `Assets/RoadTools/Runtime/BuildingLabel/BuildingLabelManager.cs` | `KakaoApiKeyProvider.cs` |
 
 ### 18.2 내부 의존성 계산 요약
 
-- 총 대상 파일: 19개
+- 총 대상 파일: 17개
 - 내부 의존이 없는 파일: `iOSBuildPostProcessor.cs`, `RoadAssetPlacer.cs`, `GPSLocationService.cs`, `CameraNavAnchor.cs`, `POIData.cs`, `KakaoApiKeyProvider.cs`
 - `NavigationUIController.cs` 직접 의존은 7개에서 3개로 감소했다: `NavigationService.cs`, `NavigationCoordinator.cs`, `POIData.cs`
-- `NavigationService.cs` 직접 의존은 6개에서 4개로 감소했다: `PositionProvider.cs`, `KakaoDirectionsService.cs`, `RoadAssetPlacer.cs`, `POIData.cs`
+- `NavigationService.cs` 직접 의존은 6개에서 4개로 감소했다: `PositionProvider.cs`, `KakaoDirectionsService.cs`, `KakaoApiKeyProvider.cs`, `POIData.cs`
 - 위치 관련 의존(`GPSLocationService.cs`, `CameraNavAnchor.cs`, `FirstPersonGPSController.cs`)은 `PositionProvider.cs`로 이동했다.
+- `SearchProvider.cs`와 `BuildingLabelManager.cs`는 현재 `Assets/RoadTools` 아래에 존재하지 않는다.
+- `RoadAssetPlacer.cs`는 현재 `Assets/RoadTools/Editor/RoadAssetPlacer/RoadAssetPlacer.cs`에 위치한다.
+- `KakaoPlaceSearchService.cs`와 `KakaoDirectionsService.cs`는 `GPSLocationService.cs` 직접 의존을 제거하고, 위치/좌표 변환 값은 상위 계층에서 전달받는 구조로 바뀌었다.
 - 순환 참조는 아직 남아 있다: `FirstPersonGPSController.cs`와 `MinimapController.cs`가 서로 참조한다.
