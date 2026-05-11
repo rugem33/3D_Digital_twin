@@ -562,11 +562,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0aa5d2adff0146046b10b2adb17656dd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CSVSpawner
-  csvFile: {fileID: 4900000, guid: 1fbcf4377a2cf68469076346eb388046, type: 3}
-  prefab: {fileID: 919132149155446097, guid: a71286ac6017df04784b958c11d0e8b3, type: 3}
-  latColumnIndex: 5
-  lonColumnIndex: 6
-  maxSpawnCount: 10
+  csvFile: {fileID: 4900000, guid: 8427b2c2ef4cd8a419e0b65402a0d869, type: 3}
+  objectPrefab: {fileID: 919132149155446097, guid: a71286ac6017df04784b958c11d0e8b3, type: 3}
+  xColumn_Longitude: 5
+  zColumn_Latitude: 6
+  yHeight: 0
+  spawnPerFrame: 100
 --- !u!114 &914385336
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -579,11 +580,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0aa5d2adff0146046b10b2adb17656dd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CSVSpawner
-  csvFile: {fileID: 4900000, guid: baec07c80c1984a4da341f63d56294ea, type: 3}
-  prefab: {fileID: 919132149155446097, guid: caa86c950f9a3dd4ebd1d045bcc27936, type: 3}
-  latColumnIndex: 6
-  lonColumnIndex: 7
-  maxSpawnCount: 10
+  csvFile: {fileID: 4900000, guid: a63fbf5c5d10f6044a0cd952de651a7d, type: 3}
+  objectPrefab: {fileID: 919132149155446097, guid: caa86c950f9a3dd4ebd1d045bcc27936, type: 3}
+  xColumn_Longitude: 6
+  zColumn_Latitude: 7
+  yHeight: 0
+  spawnPerFrame: 100
 --- !u!114 &914385337
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -596,11 +598,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0aa5d2adff0146046b10b2adb17656dd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CSVSpawner
-  csvFile: {fileID: 4900000, guid: a234d773179f76e4c9349af981c78e8a, type: 3}
-  prefab: {fileID: 919132149155446097, guid: 6af807eb0f4ad364c8400c3ba01a5641, type: 3}
-  latColumnIndex: 14
-  lonColumnIndex: 15
-  maxSpawnCount: 10
+  csvFile: {fileID: 4900000, guid: 75fc2708adcae9146a8e975c13c52578, type: 3}
+  objectPrefab: {fileID: 919132149155446097, guid: 6af807eb0f4ad364c8400c3ba01a5641, type: 3}
+  xColumn_Longitude: 14
+  zColumn_Latitude: 15
+  yHeight: 0
+  spawnPerFrame: 100
 --- !u!4 &914385338
 Transform:
   m_ObjectHideFlags: 0

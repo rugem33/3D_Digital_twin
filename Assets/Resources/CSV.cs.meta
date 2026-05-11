@@ -1,0 +1,14 @@
+fileFormatVersion: 2
+guid: 0aa5d2adff0146046b10b2adb17656dd
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - streetlightPrefab: {fileID: 919132149155446097, guid: 6af807eb0f4ad364c8400c3ba01a5641, type: 3}
+  - treePrefab: {fileID: 919132149155446097, guid: caa86c950f9a3dd4ebd1d045bcc27936, type: 3}
+  - busStopPrefab: {fileID: 919132149155446097, guid: a71286ac6017df04784b958c11d0e8b3, type: 3}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
