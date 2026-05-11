@@ -8,7 +8,7 @@ namespace Rugem.RoadTools
 {
     /// <summary>
     /// 카카오 모빌리티 API — 자동차 도로 경로 요청 (v1/directions)
-    /// 응답 vertexes(경도·위도 쌍)를 GPSLocationService를 통해 Unity 월드 좌표로 변환합니다.
+    /// 응답 vertexes(경도·위도 쌍)를 Initialize()로 주입된 좌표 변환기로 Unity 월드 좌표로 변환합니다.
     /// REST API 키는 KakaoPlaceSearchService와 동일한 키를 사용합니다.
     /// </summary>
     public class KakaoDirectionsService : MonoBehaviour
@@ -20,23 +20,19 @@ namespace Rugem.RoadTools
         [Tooltip("요청 타임아웃 (초)")]
         [SerializeField] private int _timeoutSeconds = 15;
 
-        [Header("의존성")]
-        [SerializeField] private GPSLocationService _gpsService;
-
         private const string Endpoint = "https://apis-navi.kakaomobility.com/v1/directions";
 
-        // ── 생명주기 ────────────────────────────────────────────────────────────
-
-        private void Awake()
-        {
-            if (_gpsService == null)
-                _gpsService = FindAnyObjectByType<GPSLocationService>();
-        }
+        private Func<double, double, Vector3> _coordinateConverter;
 
         // ── 공개 API ────────────────────────────────────────────────────────────
 
-        /// <summary>코드/Inspector에서 API 키를 직접 주입합니다.</summary>
-        public void Initialize(string apiKey) => _restApiKey = apiKey;
+        /// <summary>API 키와 GPS→Unity 좌표 변환기를 주입합니다.</summary>
+        public void Initialize(string apiKey, Func<double, double, Vector3> coordinateConverter = null)
+        {
+            _restApiKey = apiKey;
+            if (coordinateConverter != null)
+                _coordinateConverter = coordinateConverter;
+        }
 
         /// <summary>
         /// 카카오 모빌리티 API로 도로 경로를 요청합니다.
@@ -133,8 +129,8 @@ namespace Rugem.RoadTools
                     {
                         float lon = road.vertexes[i];
                         float lat = road.vertexes[i + 1];
-                        if (_gpsService != null)
-                            points.Add(_gpsService.ConvertToUnityPosition(lat, lon));
+                        if (_coordinateConverter != null)
+                            points.Add(_coordinateConverter(lat, lon));
                     }
                 }
             }
