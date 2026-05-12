@@ -510,10 +510,7 @@ namespace Rugem.RoadTools
             // 버튼
             float btnH  = Mathf.Clamp(Screen.height * 0.070f, 50f, 66f);
             float btnY  = cardY + cardH - btnH - pad;
-            float halfW = (innerW - pad) * 0.5f;
-            if (GUI.Button(new Rect(innerX, btnY, halfW, btnH), "여기로 이동", _styleNavStartBtn))
-                OnClickMoveToDestination();
-            if (GUI.Button(new Rect(innerX + halfW + pad, btnY, halfW, btnH), "취소", _styleDangerBtn))
+            if (GUI.Button(new Rect(innerX, btnY, innerW, btnH), "취소", _styleDangerBtn))
                 OnClickCancelNavigation();
 
             // 재검색 버튼 (카드 위)
@@ -791,7 +788,6 @@ namespace Rugem.RoadTools
             TransitionTo(NavUIState.MapOverview);
         }
 
-        private void OnClickMoveToDestination()  => _navService?.MoveToDestination();
         private void OnClickCancelNavigation()   => _navService?.ClearNavigation();
         private void TransitionTo(NavUIState s)  => _state = s;
 

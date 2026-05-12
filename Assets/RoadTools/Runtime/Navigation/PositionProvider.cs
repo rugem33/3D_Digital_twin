@@ -4,9 +4,8 @@ namespace Rugem.RoadTools
 {
     public class PositionProvider : MonoBehaviour
     {
-        [SerializeField] private GPSLocationService       _gpsService;
-        [SerializeField] private CameraNavAnchor          _navAnchor;
-        [SerializeField] private FirstPersonGPSController _playerController;
+        [SerializeField] private GPSLocationService _gpsService;
+        [SerializeField] private CameraNavAnchor    _navAnchor;
 
         // ── GPS 좌표 / Unity 위치 ─────────────────────────────────────────────
         public bool   IsReady          => _gpsService != null;
@@ -27,19 +26,11 @@ namespace Rugem.RoadTools
             }
         }
 
-        // ── 변환 / 이동 ───────────────────────────────────────────────────────
+        // ── 변환 ──────────────────────────────────────────────────────────────
         public Vector3 ConvertToUnityPosition(double latitude, double longitude)
             => _gpsService != null
                 ? _gpsService.ConvertToUnityPosition(latitude, longitude)
                 : Vector3.zero;
-
-        public void TeleportTo(double latitude, double longitude)
-        {
-            if (_playerController != null)
-                _playerController.TeleportTo(latitude, longitude);
-            else
-                Debug.LogWarning("[PositionProvider] FirstPersonGPSController가 연결되지 않았습니다.");
-        }
 
         // ── 생명주기 ──────────────────────────────────────────────────────────
 
@@ -49,7 +40,6 @@ namespace Rugem.RoadTools
         {
             if (_gpsService       == null) _gpsService       = FindAnyObjectByType<GPSLocationService>();
             if (_navAnchor        == null) _navAnchor        = FindAnyObjectByType<CameraNavAnchor>();
-            if (_playerController == null) _playerController = FindAnyObjectByType<FirstPersonGPSController>();
         }
     }
 }

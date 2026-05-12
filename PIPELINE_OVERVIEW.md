@@ -57,7 +57,6 @@ flowchart LR
 
     PositionProvider --> GPSLocationService
     PositionProvider --> CameraNavAnchor
-    PositionProvider --> FirstPersonGPSController
 
     NavigationService --> PositionProvider
     NavigationService --> KakaoDirectionsService
@@ -85,7 +84,7 @@ flowchart LR
 | `Assets/RoadTools/Runtime/Navigation/NavigationUIController.cs` | `NavigationService.cs`, `NavigationCoordinator.cs`, `POIData.cs` |
 | `Assets/RoadTools/Runtime/Navigation/NavigationCoordinator.cs` | `KakaoPlaceSearchService.cs`, `RoutePresenter.cs`, `PositionProvider.cs`, `POIData.cs` |
 | `Assets/RoadTools/Runtime/Navigation/RoutePresenter.cs` | `RouteRenderer.cs`, `MinimapController.cs` |
-| `Assets/RoadTools/Runtime/Navigation/PositionProvider.cs` | `GPSLocationService.cs`, `CameraNavAnchor.cs`, `FirstPersonGPSController.cs` |
+| `Assets/RoadTools/Runtime/Navigation/PositionProvider.cs` | `GPSLocationService.cs`, `CameraNavAnchor.cs` |
 | `Assets/RoadTools/Runtime/Navigation/NavigationService.cs` | `PositionProvider.cs`, `KakaoDirectionsService.cs`, `KakaoApiKeyProvider.cs`, `POIData.cs` |
 | `Assets/RoadTools/Runtime/Navigation/RouteRenderer.cs` | `RoadAssetPlacer.cs` |
 | `Assets/RoadTools/Runtime/Navigation/POIData.cs` | 없음 |
@@ -100,8 +99,9 @@ flowchart LR
 - 내부 의존이 없는 파일: `iOSBuildPostProcessor.cs`, `RoadAssetPlacer.cs`, `GPSLocationService.cs`, `CameraNavAnchor.cs`, `POIData.cs`, `KakaoApiKeyProvider.cs`
 - `NavigationUIController.cs` 직접 의존은 7개에서 3개로 감소했다: `NavigationService.cs`, `NavigationCoordinator.cs`, `POIData.cs`
 - `NavigationService.cs` 직접 의존은 6개에서 4개로 감소했다: `PositionProvider.cs`, `KakaoDirectionsService.cs`, `KakaoApiKeyProvider.cs`, `POIData.cs`
-- 위치 관련 의존(`GPSLocationService.cs`, `CameraNavAnchor.cs`, `FirstPersonGPSController.cs`)은 `PositionProvider.cs`로 이동했다.
+- 위치 읽기/좌표 변환 의존(`GPSLocationService.cs`, `CameraNavAnchor.cs`)은 `PositionProvider.cs`로 모였다.
 - `SearchProvider.cs`와 `BuildingLabelManager.cs`는 현재 `Assets/RoadTools` 아래에 존재하지 않는다.
 - `RoadAssetPlacer.cs`는 현재 `Assets/RoadTools/Editor/RoadAssetPlacer/RoadAssetPlacer.cs`에 위치한다.
 - `KakaoPlaceSearchService.cs`와 `KakaoDirectionsService.cs`는 `GPSLocationService.cs` 직접 의존을 제거하고, 위치/좌표 변환 값은 상위 계층에서 전달받는 구조로 바뀌었다.
+- `PositionProvider.cs`는 즉시이동 기능 제거 이후 `FirstPersonGPSController.cs`를 더 이상 참조하지 않는다.
 - 순환 참조는 아직 남아 있다: `FirstPersonGPSController.cs`와 `MinimapController.cs`가 서로 참조한다.
