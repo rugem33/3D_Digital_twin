@@ -333,44 +333,6 @@ namespace Rugem.RoadTools
             };
         }
 
-        // ── 위치 이동 (길찾기 연동) ────────────────────────────────────────────
-
-        /// <summary>
-        /// 카메라를 지정 위경도 위치로 즉시 이동합니다 (길찾기 "여기로 이동" 용).
-        /// 이동 후 Cesium 지형 높이를 비동기로 재샘플링합니다.
-        /// </summary>
-        public void TeleportTo(double latitude, double longitude)
-        {
-            ResolveDependencies();
-            if (_gpsService == null)
-            {
-                Debug.LogError("[FirstPersonGPS] TeleportTo: GPSLocationService가 연결되지 않았습니다.");
-                return;
-            }
-
-            EnsureGlobeAnchor();
-            if (_globeAnchor == null)
-            {
-                Debug.LogError("[FirstPersonGPS] TeleportTo: CesiumGlobeAnchor를 초기화할 수 없습니다.");
-                return;
-            }
-
-            Vector3 rawPos = _gpsService.ConvertToUnityPosition(latitude, longitude, 0.0);
-            float tempY    = rawPos.y + _eyeHeight;
-
-            _targetPosition      = new Vector3(rawPos.x, tempY, rawPos.z);
-            _globeAnchor.transform.position = _targetPosition;
-            _hasInitialPosition  = true;
-            _cachedGroundY       = float.MinValue; // 지면 높이 재감지 트리거
-            _lastGroundCheckXZ   = Vector2.zero;
-            _lastAcceptedXZ      = new Vector2(rawPos.x, rawPos.z); // 순간이동은 점프 가드에서 제외
-            _hasLastAcceptedXZ   = true;
-
-            // 새 위치에서 비동기 지면 높이 샘플링 시작
-            SampleAndUpdateGroundHeight(latitude, longitude, rawPos);
-            Debug.Log($"[FirstPersonGPS] 위치 이동 → 위도={latitude:F6}, 경도={longitude:F6}");
-        }
-
         // ── 회전 모드 전환 ─────────────────────────────────────────────────────
 
         /// <summary>

@@ -148,15 +148,6 @@ namespace Rugem.RoadTools
             Debug.Log($"[NavService] 목적지 설정: {poi.name} ({poi.latitude:F6}, {poi.longitude:F6})");
         }
 
-        /// <summary>플레이어 카메라를 현재 목적지 위치로 즉시 이동합니다.</summary>
-        public void MoveToDestination()
-        {
-            if (CurrentDestination == null) return;
-
-            ResolveDependencies();
-            _positionProvider?.TeleportTo(CurrentDestination.latitude, CurrentDestination.longitude);
-        }
-
         /// <summary>경로 안내를 종료하고 상태를 초기화합니다.</summary>
         public void ClearNavigation()
         {
