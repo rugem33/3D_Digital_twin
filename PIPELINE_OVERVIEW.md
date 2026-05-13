@@ -3,50 +3,53 @@
 아래 다이어그램은 현재 `Assets/RoadTools` 아래의 `.cs` 파일만 대상으로 정리했다. 화살표 방향은 "앞 파일이 뒤 파일의 타입을 참조한다"는 의미이며, Unity/Cesium/Kakao/Editor API 같은 외부 패키지 의존성은 제외했다.
 
 ```mermaid
-flowchart TD
+flowchart LR
     subgraph Editor["Editor"]
+        direction TB
         RoadAssetPlacerEditor["RoadAssetPlacerEditor.cs"]
         IOSBuildPostProcessor["iOSBuildPostProcessor.cs"]
         RoadAssetPlacer["RoadAssetPlacer.cs"]
     end
 
-    subgraph GPS["Runtime / GPS"]
-        FirstPersonGPSController["FirstPersonGPSController.cs"]
-        GPSLocationService["GPSLocationService.cs"]
-        CameraNavAnchor["CameraNavAnchor.cs"]
-    end
-
-    subgraph Minimap["Runtime / Minimap"]
-        MinimapController["MinimapController.cs"]
-    end
-
-    subgraph Navigation["Runtime / Navigation"]
+    subgraph Entry["Runtime / Entry"]
+        direction TB
         NavigationUIController["NavigationUIController.cs"]
+        FirstPersonGPSController["FirstPersonGPSController.cs"]
+    end
+
+    subgraph Facade["Runtime / Facade"]
+        direction TB
         NavigationCoordinator["NavigationCoordinator.cs"]
+    end
+
+    subgraph Services["Runtime / Services"]
+        direction TB
         NavigationService["NavigationService.cs"]
         RoutePresenter["RoutePresenter.cs"]
-        RouteRenderer["RouteRenderer.cs"]
         PositionProvider["PositionProvider.cs"]
-        POIData["POIData.cs"]
-    end
-
-    subgraph Kakao["Runtime / Navigation / KakaoApi"]
         KakaoPlaceSearchService["KakaoPlaceSearchService.cs"]
         KakaoDirectionsService["KakaoDirectionsService.cs"]
+    end
+
+    subgraph RenderAndData["Runtime / Render, GPS, Data"]
+        direction TB
+        RouteRenderer["RouteRenderer.cs"]
+        MinimapController["MinimapController.cs"]
+        GPSLocationService["GPSLocationService.cs"]
+        CameraNavAnchor["CameraNavAnchor.cs"]
+        POIData["POIData.cs"]
         KakaoApiKeyProvider["KakaoApiKeyProvider.cs"]
     end
 
     RoadAssetPlacerEditor --> RoadAssetPlacer
 
-    FirstPersonGPSController --> GPSLocationService
-
     NavigationUIController --> NavigationCoordinator
     NavigationUIController --> POIData
 
     NavigationCoordinator --> NavigationService
-    NavigationCoordinator --> KakaoPlaceSearchService
     NavigationCoordinator --> RoutePresenter
     NavigationCoordinator --> PositionProvider
+    NavigationCoordinator --> KakaoPlaceSearchService
     NavigationCoordinator --> POIData
 
     NavigationService --> PositionProvider
@@ -63,6 +66,8 @@ flowchart TD
     KakaoPlaceSearchService --> POIData
 
     KakaoDirectionsService --> KakaoApiKeyProvider
+
+    FirstPersonGPSController --> GPSLocationService
 ```
 
 ### 1.1 파일별 내부 의존 목록
