@@ -116,6 +116,7 @@ namespace Rugem.RoadTools
         private bool _gpsSubscribed;
         private int _heightSampleVersion;
         private Coroutine _iosPermissionCoroutine;
+        private const float NavigationMapSizeRatio = 0.22f;
 
         // 나침반 안정화
         private float[] _compassBuffer;
@@ -265,7 +266,7 @@ namespace Rugem.RoadTools
             float margin  = Mathf.Clamp(Screen.width * 0.03f, 14f, 28f);
             float btnSize = Mathf.Clamp(Screen.height * 0.090f, 70f, 90f);
             // 미니맵(화면 높이의 22%) 아래에 버튼 배치
-            float mapSize = Screen.height * MinimapController.MapSizeRatioConst;
+            float mapSize = Screen.height * NavigationMapSizeRatio;
             float btnY    = margin + mapSize + margin * 0.4f;
             float btnX    = Screen.width - btnSize - margin;
 

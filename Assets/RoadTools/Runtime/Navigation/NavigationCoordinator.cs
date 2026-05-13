@@ -9,9 +9,35 @@ namespace Rugem.RoadTools
     /// </summary>
     public class NavigationCoordinator : MonoBehaviour
     {
+        [SerializeField] private NavigationService     _navigation;
         [SerializeField] private KakaoPlaceSearchService _kakaoSearch;
         [SerializeField] private RoutePresenter          _route;
         [SerializeField] private PositionProvider        _position;
+
+        public event System.Action<POIData, Vector3[]> OnRouteCalculated
+        {
+            add { ResolveDependencies(); if (_navigation != null) _navigation.OnRouteCalculated += value; }
+            remove { if (_navigation != null) _navigation.OnRouteCalculated -= value; }
+        }
+
+        public event System.Action OnNavigationCleared
+        {
+            add { ResolveDependencies(); if (_navigation != null) _navigation.OnNavigationCleared += value; }
+            remove { if (_navigation != null) _navigation.OnNavigationCleared -= value; }
+        }
+
+        public event System.Action OnArrived
+        {
+            add { ResolveDependencies(); if (_navigation != null) _navigation.OnArrived += value; }
+            remove { if (_navigation != null) _navigation.OnArrived -= value; }
+        }
+
+        // ── 내비게이션 상태 (NavigationService) ──────────────────────────────
+        public POIData   CurrentDestination    => _navigation?.CurrentDestination;
+        public bool      IsNavigating          => _navigation != null && _navigation.IsNavigating;
+        public float     DistanceToDestination => _navigation != null ? _navigation.DistanceToDestination : -1f;
+        public Vector3[] CurrentRoute          => _navigation?.CurrentRoute;
+        public Vector3   DestinationWorldPos   => _navigation != null ? _navigation.DestinationWorldPos : Vector3.zero;
 
         // ── 미니맵 / 경로 표시 (RoutePresenter) ──────────────────────────────
         public float         MapSizeRatioConst => _route != null ? _route.MapSizeRatioConst  : 0f;
@@ -30,10 +56,14 @@ namespace Rugem.RoadTools
 
         private void ResolveDependencies()
         {
+            if (_navigation  == null) _navigation  = FindAnyObjectByType<NavigationService>();
             if (_kakaoSearch == null) _kakaoSearch = FindAnyObjectByType<KakaoPlaceSearchService>();
             if (_route       == null) _route       = FindAnyObjectByType<RoutePresenter>();
             if (_position    == null) _position    = FindAnyObjectByType<PositionProvider>();
         }
+
+        public void SetDestination(POIData poi) => _navigation?.SetDestination(poi);
+        public void ClearNavigation()           => _navigation?.ClearNavigation();
 
         // ── 경로 렌더러 (RoutePresenter) ──────────────────────────────────────
         public void ShowRoute(Vector3[] route)        => _route?.ShowRoute(route);
