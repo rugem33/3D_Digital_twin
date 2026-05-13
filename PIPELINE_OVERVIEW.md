@@ -4,37 +4,33 @@
 
 ```mermaid
 flowchart LR
-    subgraph Editor["Editor"]
+    subgraph Layer0["Entry / Editor"]
         direction TB
         RoadAssetPlacerEditor["RoadAssetPlacerEditor.cs"]
         IOSBuildPostProcessor["iOSBuildPostProcessor.cs"]
-        RoadAssetPlacer["RoadAssetPlacer.cs"]
-    end
-
-    subgraph Entry["Runtime / Entry"]
-        direction TB
         NavigationUIController["NavigationUIController.cs"]
         FirstPersonGPSController["FirstPersonGPSController.cs"]
     end
 
-    subgraph Facade["Runtime / Facade"]
+    subgraph Layer1["Facade / Editor Target"]
         direction TB
+        RoadAssetPlacer["RoadAssetPlacer.cs"]
         NavigationCoordinator["NavigationCoordinator.cs"]
     end
 
-    subgraph Services["Runtime / Services"]
+    subgraph Layer2["Runtime Services"]
         direction TB
-        NavigationService["NavigationService.cs"]
         RoutePresenter["RoutePresenter.cs"]
+        NavigationService["NavigationService.cs"]
         PositionProvider["PositionProvider.cs"]
         KakaoPlaceSearchService["KakaoPlaceSearchService.cs"]
-        KakaoDirectionsService["KakaoDirectionsService.cs"]
     end
 
-    subgraph RenderAndData["Runtime / Render, GPS, Data"]
+    subgraph Layer3["Render / GPS / API / Data"]
         direction TB
         RouteRenderer["RouteRenderer.cs"]
         MinimapController["MinimapController.cs"]
+        KakaoDirectionsService["KakaoDirectionsService.cs"]
         GPSLocationService["GPSLocationService.cs"]
         CameraNavAnchor["CameraNavAnchor.cs"]
         POIData["POIData.cs"]
@@ -46,18 +42,18 @@ flowchart LR
     NavigationUIController --> NavigationCoordinator
     NavigationUIController --> POIData
 
-    NavigationCoordinator --> NavigationService
     NavigationCoordinator --> RoutePresenter
+    NavigationCoordinator --> NavigationService
     NavigationCoordinator --> PositionProvider
     NavigationCoordinator --> KakaoPlaceSearchService
     NavigationCoordinator --> POIData
 
+    RoutePresenter --> RouteRenderer
+    RoutePresenter --> MinimapController
+
     NavigationService --> PositionProvider
     NavigationService --> KakaoDirectionsService
     NavigationService --> POIData
-
-    RoutePresenter --> RouteRenderer
-    RoutePresenter --> MinimapController
 
     PositionProvider --> GPSLocationService
     PositionProvider --> CameraNavAnchor
