@@ -12,7 +12,6 @@ namespace Rugem.RoadTools
         [Header("Follow Target")]
         [SerializeField] private Transform _followTarget;
         [SerializeField] private Transform _directionTarget;
-        [SerializeField] private GPSLocationService _gpsService;
 
         [Header("Minimap Camera")]
         [SerializeField] private float _cameraHeight = 400f;
@@ -35,7 +34,6 @@ namespace Rugem.RoadTools
         private RenderTexture _rt;
         private CesiumCameraManager _cameraManager;
         private bool _registeredWithCameraManager;
-        private FirstPersonGPSController _gpsController;
 
         private bool _overviewMode;
         private float _savedOrthoSize;
@@ -87,7 +85,6 @@ namespace Rugem.RoadTools
         {
             ResolveFollowTarget();
             ResolveDirectionTarget();
-            ResolveGPSService();
             EnableCompassForPlayerArrow();
             CreateMinimapCamera();
             BindCanvasUI();
@@ -129,14 +126,12 @@ namespace Rugem.RoadTools
 
         private void ResolveFollowTarget()
         {
-            var gps = _gpsController != null
-                ? _gpsController
-                : FindAnyObjectByType<FirstPersonGPSController>();
-            if (gps != null)
+            if (_followTarget != null)
+                return;
+
+            if (Camera.main != null)
             {
-                _gpsController = gps;
-                if (_followTarget == null)
-                    _followTarget = gps.transform;
+                _followTarget = Camera.main.transform;
             }
         }
 
@@ -151,12 +146,6 @@ namespace Rugem.RoadTools
             }
 
             _directionTarget = _followTarget;
-        }
-
-        private void ResolveGPSService()
-        {
-            if (_gpsService == null)
-                _gpsService = FindAnyObjectByType<GPSLocationService>();
         }
 
         private void EnableCompassForPlayerArrow()
@@ -253,7 +242,7 @@ namespace Rugem.RoadTools
             {
                 _diagnosticTimer = 0f;
                 float camYaw = GetCameraYaw();
-                string mode = _gpsController != null ? _gpsController.CurrentRotationMode.ToString() : "null";
+                string mode = "camera";
                 Debug.Log($"[Minimap] ts={Input.compass.timestamp:F2} true={Input.compass.trueHeading:F1} mag={Input.compass.magneticHeading:F1} camYaw={camYaw:F1} mode={mode}");
             }
 

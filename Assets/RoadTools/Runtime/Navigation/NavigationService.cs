@@ -71,24 +71,16 @@ namespace Rugem.RoadTools
             if (_positionProvider == null)
                 _positionProvider = FindAnyObjectByType<PositionProvider>();
 
-            _kakaoRestApiKey = KakaoApiKeyProvider.Resolve(_kakaoRestApiKey);
-
             System.Func<double, double, Vector3> converter = _positionProvider != null
                 ? (lat, lon) => _positionProvider.ConvertToUnityPosition(lat, lon)
                 : null;
 
-            if (!string.IsNullOrWhiteSpace(_kakaoRestApiKey))
-            {
-                if (_directionsService == null)
-                    _directionsService = gameObject.GetComponent<KakaoDirectionsService>()
-                                      ?? gameObject.AddComponent<KakaoDirectionsService>();
-                _directionsService.Initialize(_kakaoRestApiKey, converter);
-            }
-            else if (_directionsService == null)
-            {
-                _directionsService = FindAnyObjectByType<KakaoDirectionsService>();
-                _directionsService?.Initialize("", converter);
-            }
+            if (_directionsService == null)
+                _directionsService = FindAnyObjectByType<KakaoDirectionsService>()
+                                  ?? gameObject.GetComponent<KakaoDirectionsService>()
+                                  ?? gameObject.AddComponent<KakaoDirectionsService>();
+
+            _directionsService.Initialize(_kakaoRestApiKey, converter);
 
             if (_roadLayerMask == 0)
             {

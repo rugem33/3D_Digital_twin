@@ -6,7 +6,6 @@ namespace Rugem.RoadTools
     public class NavigationUIController : MonoBehaviour
     {
         [Header("의존성")]
-        [SerializeField] private NavigationService      _navService;
         [SerializeField] private NavigationCoordinator  _coordinator;
 
         [Header("UI 설정")]
@@ -106,25 +105,24 @@ namespace Rugem.RoadTools
 
         private void ResolveDependencies()
         {
-            if (_navService   == null) _navService   = FindAnyObjectByType<NavigationService>();
             if (_coordinator  == null) _coordinator  = FindAnyObjectByType<NavigationCoordinator>();
         }
 
         private void OnEnable()
         {
             ResolveDependencies();
-            if (_navService == null) return;
-            _navService.OnRouteCalculated   += HandleRouteCalculated;
-            _navService.OnNavigationCleared += HandleNavigationCleared;
-            _navService.OnArrived           += HandleArrived;
+            if (_coordinator == null) return;
+            _coordinator.OnRouteCalculated   += HandleRouteCalculated;
+            _coordinator.OnNavigationCleared += HandleNavigationCleared;
+            _coordinator.OnArrived           += HandleArrived;
         }
 
         private void OnDisable()
         {
-            if (_navService == null) return;
-            _navService.OnRouteCalculated   -= HandleRouteCalculated;
-            _navService.OnNavigationCleared -= HandleNavigationCleared;
-            _navService.OnArrived           -= HandleArrived;
+            if (_coordinator == null) return;
+            _coordinator.OnRouteCalculated   -= HandleRouteCalculated;
+            _coordinator.OnNavigationCleared -= HandleNavigationCleared;
+            _coordinator.OnArrived           -= HandleArrived;
         }
 
         private void OnDestroy()
@@ -418,7 +416,7 @@ namespace Rugem.RoadTools
             }
 
             // 경로 선
-            var route = _navService?.CurrentRoute;
+            var route = _coordinator?.CurrentRoute;
             if (route != null && route.Length >= 2)
             {
                 float lw = Mathf.Max(mapSize * 0.010f, 3f);
@@ -437,14 +435,14 @@ namespace Rugem.RoadTools
                 float sz = mapSize * 0.055f;
                 DrawMapMarker(pm, sz + 4f, Color.black); DrawMapMarker(pm, sz, _playerMarkerTex);
             }
-            if (_navService?.CurrentDestination != null && _destMarkerTex != null)
+            if (_coordinator?.CurrentDestination != null && _destMarkerTex != null)
             {
-                Vector2 dm = GetMapPos(_navService.DestinationWorldPos, mapRect);
+                Vector2 dm = GetMapPos(_coordinator.DestinationWorldPos, mapRect);
                 float sz = mapSize * 0.065f;
                 DrawMapMarker(dm, sz + 4f, Color.black); DrawMapMarker(dm, sz, _destMarkerTex);
                 float lblW = mapSize * 0.55f, lblH = Screen.height * 0.030f;
                 GUI.Label(new Rect(dm.x - lblW * 0.5f, dm.y - sz * 0.5f - lblH - 2f, lblW, lblH),
-                    _navService.CurrentDestination.name, _styleMapDestName);
+                    _coordinator.CurrentDestination.name, _styleMapDestName);
             }
 
             GUI.color = Color.white;
@@ -460,7 +458,7 @@ namespace Rugem.RoadTools
             float btnH = Mathf.Clamp(Screen.height * 0.072f, 52f, 70f);
             float btnW = (cardW - pad * 3f) * 0.5f;
             float btnY = cardY + bottomH - btnH - pad;
-            string destName = _navService?.CurrentDestination?.name ?? "";
+            string destName = _coordinator?.CurrentDestination?.name ?? "";
             GUI.Label(new Rect(margin + pad, cardY + pad * 0.6f,
                 cardW - pad * 2f, bottomH - btnH - pad * 2f),
                 string.IsNullOrEmpty(destName) ? "목적지" : destName, _styleInfoLabel);
@@ -468,7 +466,7 @@ namespace Rugem.RoadTools
             if (GUI.Button(new Rect(margin + pad, btnY, btnW, btnH), "취소", _styleDangerBtn))
             {
                 _coordinator?.ExitOverviewMode();
-                _navService?.ClearNavigation();
+                _coordinator?.ClearNavigation();
                 TransitionTo(NavUIState.None);
             }
             if (GUI.Button(new Rect(margin + pad * 2f + btnW, btnY, btnW, btnH), "안내 시작", _styleNavStartBtn))
@@ -496,12 +494,12 @@ namespace Rugem.RoadTools
             float innerW = cardW - pad * 2f;
 
             // 목적지명
-            string name  = _navService.CurrentDestination?.name ?? "목적지";
+            string name  = _coordinator.CurrentDestination?.name ?? "목적지";
             float  nameH = Mathf.Clamp(Screen.height * 0.052f, 36f, 50f);
             GUI.Label(new Rect(innerX, cardY + pad * 0.7f, innerW, nameH), name, _styleInfoLabel);
 
             // 거리
-            float dist    = _navService.DistanceToDestination;
+            float dist    = _coordinator.DistanceToDestination;
             string distStr = dist >= 0f ? FormatDistance(dist) : "계산 중…";
             float distH   = Mathf.Clamp(Screen.height * 0.040f, 28f, 40f);
             GUI.Label(new Rect(innerX, cardY + nameH + pad * 0.8f, innerW * 0.55f, distH),
@@ -555,7 +553,7 @@ namespace Rugem.RoadTools
             guide = "경로를 따라 직진";
             sub = "";
 
-            Vector3[] route = _navService?.CurrentRoute;
+            Vector3[] route = _coordinator?.CurrentRoute;
             if (route == null || route.Length < 2)
                 return false;
 
@@ -686,7 +684,7 @@ namespace Rugem.RoadTools
 
             GUI.Label(new Rect(boxX, boxY + boxH * 0.08f, boxW, boxH * 0.44f), "✓  도착!", _styleArrivedMsg);
 
-            string name = _navService.CurrentDestination?.name ?? "";
+            string name = _coordinator.CurrentDestination?.name ?? "";
             if (!string.IsNullOrEmpty(name))
                 GUI.Label(new Rect(boxX, boxY + boxH * 0.52f, boxW, boxH * 0.28f),
                     name + "에 도착했습니다", _styleResultSub);
@@ -770,25 +768,25 @@ namespace Rugem.RoadTools
         }
 
         private void CloseSearch() =>
-            TransitionTo(_navService != null && _navService.IsNavigating
+            TransitionTo(_coordinator != null && _coordinator.IsNavigating
                 ? NavUIState.Navigating : NavUIState.None);
 
         private void SelectDestination(POIData poi)
         {
             if (poi == null) return;
             ResolveDependencies();
-            if (_navService == null) return;
+            if (_coordinator == null) return;
             AddToRecentSearches(poi);
-            _navService.SetDestination(poi);
-            if (!_navService.IsNavigating) return;
+            _coordinator.SetDestination(poi);
+            if (!_coordinator.IsNavigating) return;
             Vector3 playerPos = _coordinator?.NavPosition           ?? Vector3.zero;
-            Vector3 destPos   = _navService?.DestinationWorldPos   ?? Vector3.zero;
+            Vector3 destPos   = _coordinator?.DestinationWorldPos   ?? Vector3.zero;
             _coordinator?.EnterOverviewMode(playerPos, destPos);
             ComputeOverviewBounds(playerPos, destPos);
             TransitionTo(NavUIState.MapOverview);
         }
 
-        private void OnClickCancelNavigation()   => _navService?.ClearNavigation();
+        private void OnClickCancelNavigation()   => _coordinator?.ClearNavigation();
         private void TransitionTo(NavUIState s)  => _state = s;
 
         // ── 오버뷰 헬퍼 ──────────────────────────────────────────────────────
@@ -802,7 +800,7 @@ namespace Rugem.RoadTools
         {
             float minX = Mathf.Min(playerPos.x, destPos.x), maxX = Mathf.Max(playerPos.x, destPos.x);
             float minZ = Mathf.Min(playerPos.z, destPos.z), maxZ = Mathf.Max(playerPos.z, destPos.z);
-            var route = _navService?.CurrentRoute;
+            var route = _coordinator?.CurrentRoute;
             if (route != null) foreach (var pt in route)
             {
                 minX = Mathf.Min(minX, pt.x); maxX = Mathf.Max(maxX, pt.x);
