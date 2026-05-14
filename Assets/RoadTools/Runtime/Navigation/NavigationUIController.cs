@@ -3,106 +3,268 @@ using UnityEngine;
 
 namespace Rugem.RoadTools
 {
+    /// <summary>
+    /// 네비게이션 전체 UI를 OnGUI로 렌더링하는 컨트롤러입니다.
+    /// 상업 지도 앱(카카오맵/구글맵) 스타일의 라이트 테마를 구현합니다.
+    ///
+    /// UI 상태 머신 (NavUIState):
+    ///   None        → 상단 검색바만 표시 (기본 상태)
+    ///   SearchOpen  → 전체화면 검색 패널 (최근 검색 / 카카오 검색 결과)
+    ///   MapOverview → 경로 전체 오버뷰 지도 + 안내 시작 버튼
+    ///   Navigating  → 하단 플로팅 카드 (목적지명·거리·취소) + 방향 안내 카드
+    ///   Arrived     → 도착 알림 오버레이 (타이머 후 None 복귀)
+    /// </summary>
     public class NavigationUIController : MonoBehaviour
     {
         [Header("의존성")]
+        /// <summary>내비게이션 전체 동작의 단일 진입점 퍼사드</summary>
         [SerializeField] private NavigationCoordinator  _coordinator;
 
         [Header("UI 설정")]
+        /// <summary>검색 패널이 화면 높이의 몇 %를 차지할지 비율 (0.4~0.85)</summary>
         [SerializeField, Range(0.4f, 0.85f)] private float _searchPanelHeightRatio = 0.65f;
+
+        /// <summary>도착 알림 오버레이 표시 시간 (초)</summary>
         [SerializeField] private float _arrivedDisplayDuration = 3.5f;
+
+        /// <summary>방향 안내 카드에서 플레이어 앞 몇 미터의 경로를 보고 방향을 계산할지 (미터)</summary>
         [SerializeField] private float _routeGuideLookAheadMeters = 18f;
 
         // ── 내부 상태 ─────────────────────────────────────────────────────────
+
+        /// <summary>UI 상태 머신의 상태 정의</summary>
         private enum NavUIState { None, SearchOpen, MapOverview, Navigating, Arrived }
+
+        /// <summary>현재 UI 상태</summary>
         private NavUIState _state = NavUIState.None;
 
+        /// <summary>검색 필드에 입력된 현재 쿼리 문자열</summary>
         private string        _searchQuery    = "";
+
+        /// <summary>카카오 API로부터 수신한 검색 결과 목록</summary>
         private List<POIData> _searchResults  = new();
+
+        /// <summary>PlayerPrefs에서 로드한 최근 검색 이력 목록 (최대 MaxRecentSearches개)</summary>
         private List<POIData> _recentSearches = new();
+
+        /// <summary>검색 패널에서 최근 검색 이력을 표시 중인지 여부 (false면 검색 결과 표시)</summary>
         private bool          _showingRecents = true;
+
+        /// <summary>검색 결과 스크롤뷰의 현재 스크롤 위치</summary>
         private Vector2       _scrollPos;
+
+        /// <summary>검색 목록 드래그 스크롤 진행 중 여부</summary>
         private bool          _isDraggingSearchList;
+
+        /// <summary>드래그 스크롤 직전 마우스/터치 Y좌표 (델타 계산용)</summary>
         private float         _lastSearchDragY;
+
+        /// <summary>드래그로 이동한 누적 거리 (클릭과 드래그 구분에 사용, 8픽셀 이하면 클릭으로 처리)</summary>
         private float         _searchDragDistance;
+
+        /// <summary>도착 알림 남은 표시 시간 (초). 0 이하가 되면 None 상태로 복귀.</summary>
         private float         _arrivedTimer;
+
+        /// <summary>검색 패널 열릴 때 텍스트 필드에 포커스를 한 번만 설정하기 위한 플래그</summary>
         private bool          _focusSearchOnce;
+
+        /// <summary>카카오 API 요청이 진행 중인지 여부 (중복 요청 방지)</summary>
         private bool          _isSearching;
+
+        /// <summary>마지막 검색 실패 메시지 (null이면 오류 없음)</summary>
         private string        _searchError;
+
+        /// <summary>입력 변경 후 자동 검색(서제스트)이 대기 중인지 여부</summary>
         private bool          _hasPendingSuggestionSearch;
+
+        /// <summary>마지막 입력 변경 시각 (Time.unscaledTime 기준, 딜레이 계산용)</summary>
         private float         _lastSearchInputChangeTime;
+
+        /// <summary>
+        /// 검색 요청 버전 번호. 요청마다 증가하여 오래된 콜백이 결과를 덮어쓰지 않도록 합니다.
+        /// </summary>
         private int           _searchRequestVersion;
+
+        /// <summary>
+        /// 오버뷰 모드에서 경로 전체를 포함하는 월드 XZ 바운딩 박스.
+        /// WorldToDiagramPos()에서 경로 점을 UI 좌표로 변환하는 데 사용합니다.
+        /// </summary>
         private Rect          _overviewWorldBounds;
 
+        // ── 상수 ─────────────────────────────────────────────────────────────
+
+        /// <summary>최근 검색 이력 최대 보관 개수</summary>
         private const int    MaxRecentSearches            = 10;
+
+        /// <summary>자동 서제스트 검색 최대 결과 수</summary>
         private const int    MaxSuggestionResults         = 10;
+
+        /// <summary>자동 서제스트 검색 반경 (미터)</summary>
         private const int    SuggestionSearchRadiusMeters = 2000;
+
+        /// <summary>입력 멈춤 후 자동 검색 시작까지 대기 시간 (초). 과도한 API 호출 방지.</summary>
         private const float  SuggestionSearchDelaySeconds = 0.35f;
+
+        /// <summary>PlayerPrefs 저장 키 — 최근 검색 개수</summary>
         private const string PrefKeyCount                 = "NavRecent_Count";
+
+        /// <summary>PlayerPrefs 저장 키 접두사 — 최근 검색 항목 JSON (NavRecent_0, NavRecent_1, ...)</summary>
         private const string PrefKeyPOI                   = "NavRecent_";
 
         // ── 스타일 ───────────────────────────────────────────────────────────
+
+        /// <summary>파란색 기본 버튼 스타일 (검색, 확인)</summary>
         private GUIStyle _stylePrimaryBtn;
+
+        /// <summary>초록색 '안내 시작' 버튼 스타일</summary>
         private GUIStyle _styleNavStartBtn;
+
+        /// <summary>회색 보조 버튼 스타일 (뒤로, 재검색)</summary>
         private GUIStyle _styleSecondaryBtn;
+
+        /// <summary>빨간색 위험 버튼 스타일 (취소)</summary>
         private GUIStyle _styleDangerBtn;
+
+        /// <summary>패널 제목 레이블 스타일</summary>
         private GUIStyle _stylePanelTitle;
+
+        /// <summary>목적지명 등 굵은 대형 정보 레이블 스타일</summary>
         private GUIStyle _styleInfoLabel;
+
+        /// <summary>거리 표시 파란색 레이블 스타일</summary>
         private GUIStyle _styleDistLabel;
+
+        /// <summary>검색 결과 항목 버튼 스타일 (투명 배경, 호버 시 파란 배경)</summary>
         private GUIStyle _styleResultBtn;
+
+        /// <summary>도착 알림 큰 흰색 텍스트 스타일</summary>
         private GUIStyle _styleArrivedMsg;
+
+        /// <summary>검색 텍스트 필드 스타일 (투명 배경)</summary>
         private GUIStyle _styleSearchField;
+
+        /// <summary>오류 메시지 빨간색 레이블 스타일</summary>
         private GUIStyle _styleErrorLabel;
+
+        /// <summary>오버뷰 지도 제목 흰색 굵은 레이블 스타일</summary>
         private GUIStyle _styleMapTitle;
+
+        /// <summary>오버뷰 지도 목적지명 노란색 레이블 스타일</summary>
         private GUIStyle _styleMapDestName;
+
+        /// <summary>검색바 힌트 텍스트("어디로 가시겠어요?") 회색 스타일</summary>
         private GUIStyle _styleHintLabel;
+
+        /// <summary>검색 결과 장소명 굵은 레이블 스타일</summary>
         private GUIStyle _styleResultName;
+
+        /// <summary>검색 결과 보조 텍스트(도착 메시지 등) 스타일</summary>
         private GUIStyle _styleResultSub;
+
+        /// <summary>카테고리 칩 레이블 스타일 (작은 텍스트, 색상 동적 설정)</summary>
         private GUIStyle _styleChipLabel;
+
+        /// <summary>검색 결과 주소/카테고리 서브 텍스트 스타일</summary>
         private GUIStyle _styleResultAddr;
+
+        /// <summary>방향 안내 카드의 방향 아이콘(↑←→↺) 큰 스타일</summary>
         private GUIStyle _styleGuideIcon;
+
+        /// <summary>방향 안내 카드의 안내 텍스트("왼쪽으로 이동" 등) 굵은 스타일</summary>
         private GUIStyle _styleGuideText;
+
+        /// <summary>방향 안내 카드의 보조 텍스트("N m 앞 경로") 소형 스타일</summary>
         private GUIStyle _styleGuideSub;
+
+        /// <summary>9-slice 라운드 코너 배경 박스 스타일 (카드 공통 사용)</summary>
         private GUIStyle _styleRoundedBase;
+
+        /// <summary>화면 크기가 변경됐을 때 스타일을 재생성하기 위한 플래그</summary>
         private bool     _stylesReady;
-        private int      _styleScreenW, _styleScreenH;
+
+        /// <summary>스타일 재생성 기준이 된 화면 너비</summary>
+        private int      _styleScreenW;
+
+        /// <summary>스타일 재생성 기준이 된 화면 높이</summary>
+        private int      _styleScreenH;
 
         // ── 텍스처 ───────────────────────────────────────────────────────────
+
+        /// <summary>플레이어 현재 위치 마커용 파란 원형 텍스처</summary>
         private Texture2D             _playerMarkerTex;
+
+        /// <summary>목적지 마커용 빨간 원형 텍스처</summary>
         private Texture2D             _destMarkerTex;
+
+        /// <summary>9-slice 카드 배경용 흰색 라운드 텍스처</summary>
         private Texture2D             _roundedWhiteTex;
+
+        /// <summary>스타일 재생성 시 동적으로 생성된 버튼 배경 텍스처 목록 (OnDestroy 시 해제)</summary>
         private readonly List<Texture2D> _ownedTextures = new();
 
         // ── 색상 팔레트 (상업 지도 앱 라이트 테마) ───────────────────────────
+
+        /// <summary>카드/패널 배경색 (거의 흰색)</summary>
         private static readonly Color C_Panel      = new Color(0.99f, 0.99f, 0.99f, 0.97f);
+
+        // 기본(N), 호버(H), 클릭(A) 세 상태의 파란색 버튼 색상
         private static readonly Color C_PrimaryN   = new Color(0.13f, 0.59f, 0.95f);
         private static readonly Color C_PrimaryH   = new Color(0.22f, 0.66f, 1.00f);
         private static readonly Color C_PrimaryA   = new Color(0.08f, 0.47f, 0.82f);
+
+        // 초록색 '안내 시작' 버튼 색상
         private static readonly Color C_GreenN     = new Color(0.04f, 0.69f, 0.42f);
         private static readonly Color C_GreenH     = new Color(0.08f, 0.78f, 0.50f);
         private static readonly Color C_GreenA     = new Color(0.02f, 0.56f, 0.34f);
+
+        // 빨간색 '취소' 버튼 색상
         private static readonly Color C_DangerN    = new Color(0.93f, 0.26f, 0.21f);
         private static readonly Color C_DangerH    = new Color(1.00f, 0.36f, 0.30f);
         private static readonly Color C_DangerA    = new Color(0.78f, 0.18f, 0.14f);
+
+        // 회색 보조 버튼 색상
         private static readonly Color C_SecN       = new Color(0.91f, 0.92f, 0.94f);
         private static readonly Color C_SecH       = new Color(0.84f, 0.86f, 0.91f);
         private static readonly Color C_SecA       = new Color(0.76f, 0.79f, 0.86f);
+
+        /// <summary>기본 텍스트 색상 (거의 검정)</summary>
         private static readonly Color C_Text       = new Color(0.12f, 0.12f, 0.12f);
+
+        /// <summary>보조 텍스트 색상 (중간 회색)</summary>
         private static readonly Color C_TextSub    = new Color(0.46f, 0.46f, 0.46f);
+
+        /// <summary>힌트 텍스트 색상 (연한 회색)</summary>
         private static readonly Color C_TextHint   = new Color(0.72f, 0.72f, 0.72f);
+
+        /// <summary>검색 결과 카테고리 칩 배경 파란색</summary>
         private static readonly Color C_ChipBlueBg = new Color(0.90f, 0.95f, 1.00f);
+
+        /// <summary>검색 결과 카테고리 칩 텍스트 파란색</summary>
         private static readonly Color C_ChipBlueTx = new Color(0.13f, 0.50f, 0.90f);
+
+        /// <summary>최근 검색 카테고리 칩 배경 보라색</summary>
         private static readonly Color C_ChipPurBg  = new Color(0.94f, 0.90f, 1.00f);
+
+        /// <summary>최근 검색 카테고리 칩 텍스트 보라색</summary>
         private static readonly Color C_ChipPurTx  = new Color(0.50f, 0.20f, 0.80f);
+
+        /// <summary>결과 항목 호버 배경색</summary>
         private static readonly Color C_ResultHov  = new Color(0.94f, 0.96f, 1.00f);
+
+        /// <summary>항목 구분선 색상</summary>
         private static readonly Color C_Divider    = new Color(0.91f, 0.91f, 0.91f);
+
+        /// <summary>도착 알림 카드 초록색 배경</summary>
         private static readonly Color C_Success    = new Color(0.04f, 0.68f, 0.42f);
-        private const int RndS = 64, RndR = 14; // 9-slice 텍스처 크기/반경
+
+        /// <summary>9-slice 라운드 텍스처 크기(픽셀) / 코너 반경(픽셀)</summary>
+        private const int RndS = 64, RndR = 14;
 
         // ── 생명주기 ─────────────────────────────────────────────────────────
 
         private void Awake() => ResolveDependencies();
 
+        /// <summary>Inspector 미연결 시 씬에서 NavigationCoordinator를 자동 탐색합니다.</summary>
         private void ResolveDependencies()
         {
             if (_coordinator  == null) _coordinator  = FindAnyObjectByType<NavigationCoordinator>();
@@ -112,6 +274,7 @@ namespace Rugem.RoadTools
         {
             ResolveDependencies();
             if (_coordinator == null) return;
+            // 코디네이터 이벤트에 UI 핸들러 등록
             _coordinator.OnRouteCalculated   += HandleRouteCalculated;
             _coordinator.OnNavigationCleared += HandleNavigationCleared;
             _coordinator.OnArrived           += HandleArrived;
@@ -120,6 +283,7 @@ namespace Rugem.RoadTools
         private void OnDisable()
         {
             if (_coordinator == null) return;
+            // 이벤트 해제 (메모리 누수 방지)
             _coordinator.OnRouteCalculated   -= HandleRouteCalculated;
             _coordinator.OnNavigationCleared -= HandleNavigationCleared;
             _coordinator.OnArrived           -= HandleArrived;
@@ -127,6 +291,7 @@ namespace Rugem.RoadTools
 
         private void OnDestroy()
         {
+            // 동적 생성 텍스처 명시적 해제
             if (_playerMarkerTex != null) Destroy(_playerMarkerTex);
             if (_destMarkerTex   != null) Destroy(_destMarkerTex);
             if (_roundedWhiteTex != null) Destroy(_roundedWhiteTex);
@@ -134,22 +299,34 @@ namespace Rugem.RoadTools
             _ownedTextures.Clear();
         }
 
+        public void OnClickOpenSearch()
+        {
+            OpenSearch();
+        }
+
         private void Update()
         {
+            // 입력 대기 중인 서제스트 검색을 지연 후 실행
             UpdateSuggestionSearch();
 
+            // 도착 알림 타이머 감소 → 만료 시 기본 상태 복귀
             if (_state == NavUIState.Arrived)
             {
                 _arrivedTimer -= Time.deltaTime;
                 if (_arrivedTimer <= 0f) TransitionTo(NavUIState.None);
             }
 
+            // 길찾기 중: 플레이어 위치 기준으로 지나친 경로 구간 제거 (.?는 null 조건부 연산자)
             if (_state == NavUIState.Navigating)
                 _coordinator?.TrimRoute(_coordinator.NavPosition);
         }
 
         // ── OnGUI ────────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// 현재 UI 상태에 따라 해당 UI를 그립니다.
+        /// 스타일은 화면 크기 변경 시 자동으로 재생성됩니다.
+        /// </summary>
         private void OnGUI()
         {
             EnsureStyles();
@@ -165,6 +342,10 @@ namespace Rugem.RoadTools
 
         // ── None — 상단 검색바 (Google/Kakao Maps 스타일) ────────────────────
 
+        /// <summary>
+        /// 기본 상태에서 상단 검색바를 그립니다.
+        /// 버튼 클릭 시 OpenSearch()를 호출해 SearchOpen 상태로 전환합니다.
+        /// </summary>
         private void DrawSearchBar()
         {
             float margin  = Mathf.Clamp(Screen.width * 0.03f, 12f, 24f);
@@ -198,6 +379,12 @@ namespace Rugem.RoadTools
 
         // ── SearchOpen — 검색 패널 (라이트 테마) ────────────────────────────
 
+        /// <summary>
+        /// 검색 패널을 그립니다.
+        /// 상단: 뒤로 버튼 + 텍스트 필드 + 검색 버튼
+        /// 하단 카드: 최근 검색 이력 또는 카카오 검색 결과 스크롤 목록
+        /// 입력 변경 시 SuggestionSearchDelaySeconds 후 자동 검색이 실행됩니다.
+        /// </summary>
         private void DrawSearchPanel()
         {
             // 흰색 배경 오버레이
@@ -303,6 +490,11 @@ namespace Rugem.RoadTools
             GUI.EndScrollView();
         }
 
+        /// <summary>
+        /// 검색 목록 스크롤 입력을 처리합니다.
+        /// 마우스 휠, 터치 드래그 모두 지원합니다.
+        /// _searchDragDistance를 통해 클릭(≤8px)과 드래그(>8px)를 구분합니다.
+        /// </summary>
         private void HandleSearchListScroll(Rect viewRect, Rect contentRect)
         {
             float maxScrollY = Mathf.Max(0f, contentRect.height - viewRect.height);
@@ -321,6 +513,11 @@ namespace Rugem.RoadTools
             else if (e.type == EventType.MouseUp && e.button == 0) _isDraggingSearchList = false;
         }
 
+        /// <summary>
+        /// 검색 결과 또는 최근 검색 항목 하나를 그립니다.
+        /// isRecent=true이면 보라색 칩, false이면 파란색 칩으로 구분됩니다.
+        /// 드래그 거리가 8픽셀 이하일 때만 클릭으로 인식합니다.
+        /// </summary>
         private void DrawResultItem(POIData poi, Rect rect, bool isRecent = false)
         {
             bool clicked = GUI.Button(rect, "", _styleResultBtn);
@@ -368,6 +565,11 @@ namespace Rugem.RoadTools
 
         // ── MapOverview — 경로 확인 ──────────────────────────────────────────
 
+        /// <summary>
+        /// 경로 오버뷰 화면을 그립니다.
+        /// 미니맵 RenderTexture 위에 경로 선·플레이어·목적지 마커를 그리고,
+        /// 하단 카드에 목적지명과 취소/안내 시작 버튼을 표시합니다.
+        /// </summary>
         private void DrawMapOverview()
         {
             GUI.color = new Color(0f, 0f, 0f, 0.60f);
@@ -478,6 +680,10 @@ namespace Rugem.RoadTools
 
         // ── Navigating — 하단 플로팅 카드 ───────────────────────────────────
 
+        /// <summary>
+        /// 길찾기 중 하단 플로팅 카드를 그립니다.
+        /// 목적지명·남은 거리·취소 버튼을 표시하고, 재검색 버튼도 카드 위에 배치합니다.
+        /// </summary>
         private void DrawNavigationBar()
         {
             float margin = Mathf.Clamp(Screen.width * 0.035f, 12f, 26f);
@@ -522,8 +728,12 @@ namespace Rugem.RoadTools
                 OpenSearch();
         }
 
-        // ── Arrived — 도착 알림 카드 ─────────────────────────────────────────
+        // ── 방향 안내 카드 / 도착 알림 ──────────────────────────────────────────
 
+        /// <summary>
+        /// 경로 앞 _routeGuideLookAheadMeters 미터 기준 방향 안내 카드를 그립니다.
+        /// 플레이어 전방과 목표 방향의 SignedAngle로 직진/좌/우/유턴을 결정합니다.
+        /// </summary>
         private void DrawRouteDirectionGuide(float margin)
         {
             if (!TryGetRouteDirectionGuide(out string icon, out string guide, out string sub))
@@ -547,6 +757,11 @@ namespace Rugem.RoadTools
             GUI.Label(new Rect(textX, guideY + guideH * 0.55f, textW, guideH * 0.32f), sub, _styleGuideSub);
         }
 
+        /// <summary>
+        /// 현재 경로 기준 방향 안내 데이터를 계산합니다.
+        /// lookAhead 거리 앞의 경로 목표 지점을 구하고 카메라 forward와의 각도로 방향을 결정합니다.
+        /// 경로가 없거나 유효하지 않으면 false를 반환합니다.
+        /// </summary>
         private bool TryGetRouteDirectionGuide(out string icon, out string guide, out string sub)
         {
             icon = "↑";
@@ -602,6 +817,11 @@ namespace Rugem.RoadTools
         private Vector3 GetNavigationPosition() =>
             _coordinator?.NavPosition ?? Vector3.zero;
 
+        /// <summary>
+        /// 경로에서 플레이어에 가장 가까운 구간을 찾은 뒤,
+        /// 그 지점에서 lookAhead 미터 앞의 경로 위 좌표(target)와 실제 거리를 반환합니다.
+        /// XZ 평면 투영으로 Y(높이) 오차를 제거합니다.
+        /// </summary>
         private static bool TryGetLookAheadRouteTarget(Vector3[] route, Vector3 player, float lookAhead, out Vector3 target, out float distanceToTarget)
         {
             target = default;
@@ -668,6 +888,11 @@ namespace Rugem.RoadTools
             return true;
         }
 
+        /// <summary>
+        /// 도착 알림 오버레이를 그립니다.
+        /// 초록색 카드 중앙에 "✓ 도착!" 메시지를 표시하고,
+        /// _arrivedDisplayDuration 동안 진행 바가 줄어들다 사라집니다.
+        /// </summary>
         private void DrawArrivedOverlay()
         {
             GUI.color = new Color(0f, 0f, 0f, 0.42f);
@@ -720,6 +945,10 @@ namespace Rugem.RoadTools
 
         // ── UI 동작 ───────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// 검색 패널을 초기화하고 SearchOpen 상태로 전환합니다.
+        /// 텍스트 필드에 포커스를 한 번 설정하고 최근 검색 이력을 로드합니다.
+        /// </summary>
         private void OpenSearch()
         {
             _searchQuery = ""; _searchResults = new List<POIData>(); _scrollPos = Vector2.zero;
@@ -729,6 +958,10 @@ namespace Rugem.RoadTools
             TransitionTo(NavUIState.SearchOpen);
         }
 
+        /// <summary>
+        /// 현재 검색 쿼리로 카카오 장소 검색 API를 호출합니다.
+        /// _searchRequestVersion으로 이전 요청의 콜백이 덮어쓰지 않도록 보호합니다.
+        /// </summary>
         private void StartKakaoSearch()
         {
             string query = _searchQuery.Trim();
@@ -746,6 +979,11 @@ namespace Rugem.RoadTools
             });
         }
 
+        /// <summary>
+        /// 입력 변경 시 서제스트 자동 검색을 예약합니다.
+        /// SuggestionSearchDelaySeconds 후 UpdateSuggestionSearch()에서 실제 요청이 발생합니다.
+        /// 쿼리가 비어 있으면 최근 검색 이력 표시로 복귀합니다.
+        /// </summary>
         private void QueueSuggestionSearch()
         {
             string query = _searchQuery.Trim();
@@ -760,6 +998,10 @@ namespace Rugem.RoadTools
             _hasPendingSuggestionSearch = true; _lastSearchInputChangeTime = Time.unscaledTime;
         }
 
+        /// <summary>
+        /// Update()에서 매 프레임 호출됩니다.
+        /// 대기 중인 서제스트 검색이 있고 지연 시간이 지났으면 실제 검색을 실행합니다.
+        /// </summary>
         private void UpdateSuggestionSearch()
         {
             if (_state != NavUIState.SearchOpen || !_hasPendingSuggestionSearch) return;
@@ -771,6 +1013,10 @@ namespace Rugem.RoadTools
             TransitionTo(_coordinator != null && _coordinator.IsNavigating
                 ? NavUIState.Navigating : NavUIState.None);
 
+        /// <summary>
+        /// 검색 결과 항목 클릭 시 호출됩니다.
+        /// 최근 검색에 추가하고, 목적지를 설정한 뒤 오버뷰 모드로 전환합니다.
+        /// </summary>
         private void SelectDestination(POIData poi)
         {
             if (poi == null) return;
@@ -791,11 +1037,19 @@ namespace Rugem.RoadTools
 
         // ── 오버뷰 헬퍼 ──────────────────────────────────────────────────────
 
+        /// <summary>
+        /// 월드 좌표를 오버뷰 지도 UI 좌표로 변환합니다.
+        /// 미니맵이 있으면 카메라 직교 투영 기준 변환, 없으면 경로 바운딩박스 기준 변환을 사용합니다.
+        /// </summary>
         private Vector2 GetMapPos(Vector3 worldPos, Rect mapRect) =>
             _coordinator != null && _coordinator.HasMinimap
                 ? WorldToMapPos(worldPos, mapRect)
                 : WorldToDiagramPos(worldPos, mapRect);
 
+        /// <summary>
+        /// 플레이어·목적지·경로 전체를 포함하는 월드 XZ 바운딩박스를 계산합니다.
+        /// 30% 여백을 추가해 경로가 오버뷰 지도 안에 여유 있게 들어오도록 합니다.
+        /// </summary>
         private void ComputeOverviewBounds(Vector3 playerPos, Vector3 destPos)
         {
             float minX = Mathf.Min(playerPos.x, destPos.x), maxX = Mathf.Max(playerPos.x, destPos.x);
@@ -811,6 +1065,10 @@ namespace Rugem.RoadTools
                 (maxX - minX) + pad * 2f, (maxZ - minZ) + pad * 2f);
         }
 
+        /// <summary>
+        /// 미니맵 없을 때: _overviewWorldBounds 기준 정규화(0~1)하여 mapRect 픽셀 좌표로 변환합니다.
+        /// V축은 Z가 증가하면 화면 아래로 가도록 반전합니다.
+        /// </summary>
         private Vector2 WorldToDiagramPos(Vector3 worldPos, Rect mapRect)
         {
             if (_overviewWorldBounds.width <= 0f) return mapRect.center;
@@ -820,6 +1078,10 @@ namespace Rugem.RoadTools
                                mapRect.y + mapRect.height * Mathf.Clamp01(v));
         }
 
+        /// <summary>
+        /// 미니맵 있을 때: 미니맵 카메라 위치와 orthographicSize를 기준으로
+        /// 월드 좌표를 직교 투영 픽셀 좌표로 변환합니다.
+        /// </summary>
         private Vector2 WorldToMapPos(Vector3 worldPos, Rect mapRect)
         {
             Vector3 cam = _coordinator.MinimapCamPosition;
@@ -855,6 +1117,9 @@ namespace Rugem.RoadTools
 
         // ── 그리기 유틸리티 ───────────────────────────────────────────────────
 
+        /// <summary>
+        /// 주어진 Rect 아래에 두 겹의 반투명 그림자를 그려 카드 깊이감을 표현합니다.
+        /// </summary>
         private static void DrawDropShadow(Rect r)
         {
             GUI.color = new Color(0f, 0f, 0f, 0.10f);
@@ -876,6 +1141,10 @@ namespace Rugem.RoadTools
 
         // ── 최근 검색 ─────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// PlayerPrefs에서 최근 검색 이력을 로드합니다.
+        /// JSON 직렬화 실패한 항목은 무시하고 건너뜁니다.
+        /// </summary>
         private void LoadRecentSearches()
         {
             _recentSearches = new List<POIData>();
@@ -896,6 +1165,11 @@ namespace Rugem.RoadTools
             PlayerPrefs.Save();
         }
 
+        /// <summary>
+        /// 선택한 POI를 최근 검색 목록 맨 앞에 추가합니다.
+        /// 동일한 이름+위경도가 이미 있으면 제거 후 재삽입합니다.
+        /// MaxRecentSearches 초과 시 가장 오래된 항목을 삭제합니다.
+        /// </summary>
         private void AddToRecentSearches(POIData poi)
         {
             _recentSearches.RemoveAll(r => r.name == poi.name
@@ -908,9 +1182,14 @@ namespace Rugem.RoadTools
 
         // ── 유틸리티 ─────────────────────────────────────────────────────────
 
+        /// <summary>미터를 사람이 읽기 좋은 거리 문자열로 변환합니다. 1km 이상이면 km 단위로 표시.</summary>
         private static string FormatDistance(float meters) =>
             meters >= 1000f ? $"{meters / 1000f:F1} km" : $"{Mathf.RoundToInt(meters)} m";
 
+        /// <summary>
+        /// 카테고리 문자열에서 마지막 '>' 이후의 가장 구체적인 분류를 추출합니다.
+        /// 8자 초과이면 앞 8자만 사용합니다.
+        /// </summary>
         private static string CompactCategory(string category)
         {
             if (string.IsNullOrWhiteSpace(category)) return "장소";
@@ -922,6 +1201,10 @@ namespace Rugem.RoadTools
 
         // ── 스타일 초기화 ─────────────────────────────────────────────────────
 
+        /// <summary>
+        /// GUI 스타일과 마커 텍스처가 없거나 화면 크기가 바뀌었으면 재생성합니다.
+        /// 화면 해상도에 비례한 fontSize를 사용해 다양한 기기 크기에 대응합니다.
+        /// </summary>
         private void EnsureStyles()
         {
             if (_playerMarkerTex == null) _playerMarkerTex = MakeCircleTex(32, C_PrimaryN);
@@ -1118,6 +1401,7 @@ namespace Rugem.RoadTools
             };
         }
 
+        /// <summary>라운드 코너 텍스처를 생성하고 _ownedTextures에 등록해 OnDestroy 시 자동 해제합니다.</summary>
         private Texture2D NewTex(Color c)
         {
             var t = MakeRoundedTex(RndS, RndS, RndR, c);
@@ -1125,6 +1409,10 @@ namespace Rugem.RoadTools
             return t;
         }
 
+        /// <summary>
+        /// 지정 크기의 라운드 코너 사각형 텍스처를 생성합니다.
+        /// 9-slice 스케일링에 사용되며, 코너 r픽셀이 부드럽게 처리됩니다.
+        /// </summary>
         private static Texture2D MakeRoundedTex(int w, int h, int r, Color c)
         {
             var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
@@ -1147,6 +1435,10 @@ namespace Rugem.RoadTools
             return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= (float)r * r;
         }
 
+        /// <summary>
+        /// 플레이어·목적지 마커용 원형 텍스처를 생성합니다.
+        /// 원 바깥 픽셀은 투명(Color.clear)으로 설정합니다.
+        /// </summary>
         private static Texture2D MakeCircleTex(int size, Color c)
         {
             var tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
