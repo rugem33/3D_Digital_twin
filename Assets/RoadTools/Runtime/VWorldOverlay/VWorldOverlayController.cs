@@ -1,5 +1,4 @@
 using System.Collections;
-using System.Reflection;
 using CesiumForUnity;
 using UnityEngine;
 
@@ -14,14 +13,6 @@ namespace Rugem.RoadTools
 
     /// <summary>
     /// V-World WMTS 오버레이 컨트롤러
-    ///
-    /// ── 크래시 방지 설계 ────────────────────────────────────────────
-    ///  1. Reflection으로 backing field를 직접 써서 Refresh() → RemoveFromTileset() 우회
-    ///  2. materialKey = "overlay1" 고정 (기본 "overlay0"은 Bing Maps와 충돌)
-    ///  3. 오버레이 등록 동안 HeightSamplerToDisable 컴포넌트를 일시 비활성화
-    ///     → SampleHeightMostDetailed 콜백이 Cesium 네이티브 재구성과 겹치면
-    ///       Cesium3DTileset.Update()에서 abort() 발생하는 것을 방지
-    /// ────────────────────────────────────────────────────────────────
     ///
     /// ── 씬 설정 순서 ────────────────────────────────────────────────
     ///  1. Tileset GameObject 선택
@@ -61,19 +52,6 @@ namespace Rugem.RoadTools
         public VWorldLayerType CurrentLayer   => _layerType;
         public bool            IsOverlayActive => _registered && _overlay != null && _overlay.enabled;
 
-        private static readonly FieldInfo FieldUrl =
-            typeof(CesiumUrlTemplateRasterOverlay)
-                .GetField("_templateUrl", BindingFlags.NonPublic | BindingFlags.Instance);
-        private static readonly FieldInfo FieldMin =
-            typeof(CesiumUrlTemplateRasterOverlay)
-                .GetField("_minimumLevel", BindingFlags.NonPublic | BindingFlags.Instance);
-        private static readonly FieldInfo FieldMax =
-            typeof(CesiumUrlTemplateRasterOverlay)
-                .GetField("_maximumLevel", BindingFlags.NonPublic | BindingFlags.Instance);
-        private static readonly FieldInfo FieldMaterialKey =
-            typeof(CesiumRasterOverlay)
-                .GetField("_materialKey", BindingFlags.NonPublic | BindingFlags.Instance);
-
         IEnumerator Start()
         {
             if (_targetTileset == null)
@@ -82,43 +60,31 @@ namespace Rugem.RoadTools
                 yield break;
             }
 
-            _overlay = _targetTileset.gameObject.GetComponent<CesiumUrlTemplateRasterOverlay>();
-            if (_overlay == null)
-            {
-                Debug.LogError(
-                    "[VWorldOverlay] Tileset GameObject에 CesiumUrlTemplateRasterOverlay가 없습니다.\n" +
-                    "  Tileset 선택 → Add Component → Cesium URL Template Raster Overlay\n" +
-                    "  추가된 컴포넌트의 체크박스를 OFF 상태로 설정한 뒤 다시 Play");
-                yield break;
-            }
-
-            if (FieldUrl == null)
-            {
-                Debug.LogError(
-                    "[VWorldOverlay] Cesium 내부 필드(_templateUrl)를 찾지 못했습니다.\n" +
-                    "Cesium for Unity 버전이 변경됐을 수 있습니다.");
-                yield break;
-            }
-
             if (_heightSamplerToDisable == null)
                 Debug.LogWarning("[VWorldOverlay] Height Sampler To Disable이 연결되지 않았습니다.\n" +
                                  "FirstPersonGPSController를 연결하지 않으면 오버레이 전환 중 크래시가 발생할 수 있습니다.");
+
+            // 씬에 미리 배치된 컴포넌트가 있으면 즉시 비활성화 (잘못된 URL로 요청 방지)
+            var existing = _targetTileset.gameObject.GetComponent<CesiumUrlTemplateRasterOverlay>();
+            if (existing != null)
+            {
+                existing.enabled = false;
+                yield return null;
+                Destroy(existing);
+                yield return new WaitForSeconds(0.3f);
+            }
 
             // 네이티브 Tileset 초기화 완료 대기
             yield return null;
             yield return null;
 
-            if (_overlay.enabled)
-                _overlay.enabled = false;
-            _registered = false;
-
             yield return StartCoroutine(ApplyOverlayRoutine(_layerType));
         }
 
-        /// <summary>지정 레이어를 적용합니다. 내부적으로 코루틴을 사용합니다.</summary>
+        /// <summary>지정 레이어를 적용합니다.</summary>
         public void ApplyOverlay(VWorldLayerType layer)
         {
-            if (_overlay == null || FieldUrl == null) return;
+            if (_targetTileset == null) return;
             StartCoroutine(ApplyOverlayRoutine(layer));
         }
 
@@ -133,7 +99,7 @@ namespace Rugem.RoadTools
                 yield break;
             }
 
-            // GPS 높이 샘플링 중단 — SampleHeightMostDetailed와 Cesium 재구성 충돌 방지
+            // GPS 높이 샘플링 중단
             bool samplerWasEnabled = false;
             if (_heightSamplerToDisable != null)
             {
@@ -141,32 +107,30 @@ namespace Rugem.RoadTools
                 _heightSamplerToDisable.enabled = false;
             }
 
-            yield return null; // 중단 반영 대기
+            yield return null;
 
-            // 기존 오버레이 컴포넌트 파괴 — enabled 토글 대신 완전 재생성으로 abort 방지
+            // 기존 오버레이 파괴
             if (_overlay != null)
             {
                 _overlay.enabled = false;
                 yield return null;
                 Destroy(_overlay);
-                _overlay     = null;
-                _registered  = false;
-                // 네이티브 RemoveFromTileset + 타일셋 안정화 대기
+                _overlay    = null;
+                _registered = false;
                 yield return new WaitForSeconds(0.5f);
-                yield return null;
                 yield return null;
             }
 
-            // 새 오버레이 컴포넌트 생성 (비활성 상태로)
+            // 새 오버레이 생성 (비활성 상태로 — 프로퍼티 설정 후 활성화)
             _overlay = _targetTileset.gameObject.AddComponent<CesiumUrlTemplateRasterOverlay>();
             _overlay.enabled = false;
             yield return null;
 
-            // 필드 설정
-            FieldUrl.SetValue(_overlay, BuildUrl(key, layer));
-            FieldMin?.SetValue(_overlay, Mathf.Max(_minimumLevel, 6));
-            FieldMax?.SetValue(_overlay, Mathf.Min(_maximumLevel, 19));
-            FieldMaterialKey?.SetValue(_overlay, "overlay1");
+            // 공개 프로퍼티로 설정 (Refresh()는 disabled 상태라 no-op)
+            _overlay.templateUrl   = BuildUrl(key, layer);
+            _overlay.minimumLevel  = Mathf.Max(_minimumLevel, 6);
+            _overlay.maximumLevel  = Mathf.Min(_maximumLevel, 19);
+            _overlay.materialKey   = "overlay1";
 
             yield return null;
 
@@ -175,19 +139,17 @@ namespace Rugem.RoadTools
             _registered      = true;
             _layerType       = layer;
 
-            Debug.Log($"[VWorldOverlay] {layer} 등록 완료 — 네이티브 재구성 대기 중...");
+            Debug.Log($"[VWorldOverlay] {layer} 등록 완료 — URL: {_overlay.templateUrl}");
 
-            // Cesium 네이티브 재구성 완료 대기
             yield return new WaitForSeconds(1.5f);
 
-            // GPS 샘플링 재개
             if (_heightSamplerToDisable != null)
                 _heightSamplerToDisable.enabled = samplerWasEnabled;
 
             Debug.Log($"[VWorldOverlay] {layer} 적용 완료");
         }
 
-        /// <summary>오버레이를 비활성화합니다 (컴포넌트 파괴 없음).</summary>
+        /// <summary>오버레이를 비활성화합니다.</summary>
         public void RemoveOverlay()
         {
             if (_overlay == null || !_registered) return;
