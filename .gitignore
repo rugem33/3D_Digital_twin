@@ -2714,3 +2714,5 @@ iosBuild/usymtoolarm64
 /.dotnet
 /.claude
 /Assets/_Recovery
+/Assets/Resources
+/Tools/tiles
