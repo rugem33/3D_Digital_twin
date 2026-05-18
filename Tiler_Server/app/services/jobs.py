@@ -1,6 +1,7 @@
 import json
 import re
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -49,9 +50,14 @@ def start_conversion_job(
 
 def read_job_status(job_id: str) -> dict[str, Any] | None:
     status_path = _status_path(job_id)
-    if not status_path.exists():
+    # exists() 후 read_text() 사이 TOCTOU 경쟁 조건 방지 — EAFP 패턴 사용
+    try:
+        return json.loads(status_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return None
-    return json.loads(status_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        # 다른 스레드가 파일을 쓰는 도중 읽힌 경우 → 일시적 오류, None 반환
+        return None
 
 
 def read_job_logs(job_id: str, max_chars: int = 12000) -> dict[str, Any] | None:
@@ -215,9 +221,15 @@ def _write_status(
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     status_path = output_dir / "status.json"
+
     data: dict[str, Any] = {}
-    if merge and status_path.exists():
-        data = json.loads(status_path.read_text(encoding="utf-8"))
+    if merge:
+        # EAFP: 읽기 실패 시 빈 dict 로 시작 (파일이 없거나 다른 스레드가 교체 중일 수 있음)
+        try:
+            data = json.loads(status_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+
     data.update(
         {
             "jobId": job_id,
@@ -226,9 +238,19 @@ def _write_status(
             **payload,
         }
     )
-    tmp_path = output_dir / "status.json.tmp"
-    tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp_path.replace(status_path)
+
+    # 고정 tmp 파일명 대신 유니크 tmp 파일 사용 → 다중 스레드 동시 쓰기 경쟁 방지
+    fd, tmp_name = tempfile.mkstemp(dir=output_dir, suffix=".tmp")
+    try:
+        with open(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        Path(tmp_name).replace(status_path)  # POSIX atomic rename
+    except Exception:
+        try:
+            Path(tmp_name).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _tail_text(path: Path, max_chars: int) -> str:

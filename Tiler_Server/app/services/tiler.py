@@ -31,6 +31,11 @@ def build_mago_command(
 ) -> list[str]:
     command = [
         "java",
+        f"-Xms{config.JAVA_XMS}",           # 초기 힙 — 작은 값에서 시작해 GC 반복 방지
+        f"-Xmx{config.JAVA_XMX}",           # 최대 힙 — 부족하면 전처리 GC 폭발
+        "-XX:+UseG1GC",                      # G1GC: 대용량 힙에서 멈춤 시간 최소화
+        "-XX:MaxGCPauseMillis=200",          # GC 목표 멈춤 시간 200ms
+        "-XX:+UseStringDeduplication",       # 문자열 중복 제거로 힙 절약
         "-jar",
         str(config.MAGO_TILER_JAR),
         "-i",

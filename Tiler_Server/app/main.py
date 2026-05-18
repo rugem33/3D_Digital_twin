@@ -11,6 +11,13 @@ from app.services.archive import reset_dir, zip_directory
 from app.services.jobs import read_job_logs, read_job_status, start_conversion_job
 from app.services.shapefile import find_shapefile, find_terrain_file, read_attributes, save_uploads
 from app.services.tiler import TilerOptions, run_mago_tiler
+from app.services.terrain import (
+    read_terrain_log,
+    read_terrain_status,
+    serve_layer_json,
+    get_tile_bytes,
+    start_terrain_job,
+)
 
 
 ALLOWED_OUTPUT_TYPES = {"b3dm", "i3dm", "pnts"}
@@ -27,6 +34,22 @@ def create_app() -> Flask:
         resp.headers["Access-Control-Allow-Headers"] = "*"
         resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
         return resp
+
+    @app.get("/")
+    def root():
+        return jsonify({
+            "status": "ok",
+            "endpoints": {
+                "health":          "GET /health",
+                "convert":         "POST /api/convert",
+                "terrain_upload":  "POST /api/terrain/upload",
+                "terrain_status":  "GET /api/terrain/jobs/<job_id>/status",
+                "terrain_log":     "GET /api/terrain/jobs/<job_id>/log",
+                "terrain_layer":   "GET /terrain/<job_id>/layer.json",
+                "terrain_tile":    "GET /terrain/<job_id>/<z>/<x>/<y>.terrain",
+            },
+            "note": "Cesium 지형 URL 형식: /terrain/<job_id>/layer.json",
+        })
 
     @app.get("/health")
     def health():
@@ -56,7 +79,7 @@ def create_app() -> Flask:
             conversion = prepare_conversion_request(job_id, job_upload_dir, job_output_dir)
             start_conversion_job(
                 job_id,
-                job_upload_dir,
+                conversion["shp_path"].parent,  # ZIP 내 SHP 위치한 디렉토리만 전달 (__MACOSX 등 메타폴더 제외)
                 job_output_dir,
                 conversion["options"],
                 conversion["terrain_path"],
@@ -168,6 +191,83 @@ def create_app() -> Flask:
         if config.OUTPUT_DIR.resolve() not in output_dir.parents and output_dir != config.OUTPUT_DIR.resolve():
             return jsonify({"error": "invalid job id"}), 400
         return send_from_directory(output_dir, filename)
+
+    # ── DEM → 지형 타일 변환 API ────────────────────────────────────────────
+
+    @app.post("/api/terrain/upload")
+    def terrain_upload():
+        dem_file = request.files.get("demFile")
+        if not dem_file:
+            return jsonify({"error": "demFile 필드가 없습니다."}), 400
+
+        ext = Path(dem_file.filename or "").suffix.lower()
+        if ext not in {".tif", ".tiff", ".img", ".hgt"}:
+            return jsonify({
+                "error": f"지원하지 않는 형식: {ext}. .tif / .tiff / .img / .hgt 만 허용됩니다."
+            }), 400
+
+        job_id = uuid.uuid4().hex
+        max_zoom = int(request.form.get("maxZoom", config.DEFAULT_TERRAIN_MAX_ZOOM))
+
+        input_dir = config.TERRAIN_DIR / job_id / "input"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        dem_path = input_dir / f"dem{ext}"
+        dem_file.save(str(dem_path))
+
+        start_terrain_job(job_id, dem_path, max_zoom)
+
+        return jsonify({
+            "jobId": job_id,
+            "status": "running",
+            "statusUrl": public_url(f"/api/terrain/jobs/{job_id}/status"),
+            "layerUrl": public_url(f"/terrain/{job_id}/layer.json"),
+        }), 202
+
+    @app.get("/api/terrain/jobs/<job_id>/status")
+    def terrain_job_status(job_id: str):
+        status = read_terrain_status(job_id)
+        if status is None:
+            return jsonify({"error": "terrain job not found", "jobId": job_id}), 404
+        if status.get("status") == "completed":
+            status.setdefault("layerUrl", public_url(f"/terrain/{job_id}/layer.json"))
+        return jsonify(status)
+
+    @app.get("/api/terrain/jobs/<job_id>/log")
+    def terrain_job_log(job_id: str):
+        max_chars = int(request.args.get("maxChars", "32000"))
+        log_text = read_terrain_log(job_id, max_chars=max_chars)
+        if log_text is None:
+            return jsonify({"error": "log not found", "jobId": job_id}), 404
+        return Response(log_text, content_type="text/plain; charset=utf-8")
+
+    @app.get("/terrain/<job_id>/layer.json")
+    def terrain_layer_json(job_id: str):
+        data = serve_layer_json(job_id, request.host_url)
+        if data is None:
+            return jsonify({"error": "terrain job not found or not yet completed"}), 404
+        return Response(
+            json.dumps(data, indent=2),
+            content_type="application/json",
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
+    @app.get("/terrain/<job_id>/<int:z>/<int:x>/<int:y>.terrain")
+    def terrain_tile(job_id: str, z: int, x: int, y: int):
+        raw = get_tile_bytes(job_id, z, x, y)
+        if raw is None:
+            return jsonify({
+                "error": "terrain tile not found",
+                "jobId": job_id,
+                "z": z,
+                "x": x,
+                "y": y,
+            }), 404
+
+        is_gzip = raw[:2] == b"\x1f\x8b"
+        hdrs = {"Cache-Control": "no-store, max-age=0"}
+        if is_gzip:
+            hdrs["Content-Encoding"] = "gzip"
+        return Response(raw, content_type="application/vnd.quantized-mesh", headers=hdrs)
 
     return app
 
