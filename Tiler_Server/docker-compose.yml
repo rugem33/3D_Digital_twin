@@ -3,14 +3,24 @@ services:
     build: .
     container_name: tiler-server
     ports:
-      - "8000:8000"
+      - "0.0.0.0:8000:8000"
     environment:
-      PUBLIC_BASE_URL: "http://localhost:8000"
+      PUBLIC_BASE_URL: ""
       DEFAULT_COORDINATE_CODE: "5186"
       DEFAULT_HEIGHT_COLUMN: "height"
       DEFAULT_SKIRT_HEIGHT: "10.0"
       CONVERT_TIMEOUT_SECONDS: "1800"
-      MAX_UPLOAD_MB: "512"
+      MAX_UPLOAD_MB: "2048"
+      JAVA_XMS: "8g"
+      JAVA_XMX: "8g"
     volumes:
-      - ./data:/data
+      - tiler_data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 12g
     restart: unless-stopped
+
+volumes:
+  tiler_data:

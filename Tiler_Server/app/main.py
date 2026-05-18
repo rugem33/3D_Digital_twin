@@ -61,6 +61,7 @@ def create_app() -> Flask:
                 conversion["options"],
                 conversion["terrain_path"],
                 conversion["attributes"],
+                request.host_url.rstrip("/"),
             )
             return jsonify(
                 {
@@ -253,7 +254,7 @@ def public_url(path: str | Path) -> str:
     clean_path = "/" + str(path).lstrip("/")
     if config.PUBLIC_BASE_URL:
         return f"{config.PUBLIC_BASE_URL}{clean_path}"
-    return clean_path
+    return f"{request.host_url.rstrip('/')}{clean_path}"
 
 
 app = create_app()

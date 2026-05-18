@@ -2,7 +2,8 @@
     "name": "Rugem.RoadTools.Editor",
     "rootNamespace": "",
     "references": [
-        "GUID:d2cbd52404ef1d6498cc63315dc489f5"
+        "GUID:d2cbd52404ef1d6498cc63315dc489f5",
+        "GUID:e955205dedc45914484fc18226a49b5b"
     ],
     "includePlatforms": [
         "Editor"

@@ -1,3 +1,28 @@
+FROM python:3.11-slim AS ctb-builder
+
+RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        git \
+        gdal-bin \
+        libgdal-dev \
+        zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/geo-data/cesium-terrain-builder /src/ctb \
+    && cd /src \
+    && apt-get update \
+    && apt-get source gdal \
+    && cp "$(find /src/gdal-* -iname '*overview*dataset*.cpp' -print -quit)" /src/ctb/src/gdaloverviewdataset.cpp \
+    && sed -i '/#include "GDALTiler.hpp"/a #include "gdaloverviewdataset.cpp"' /src/ctb/src/GDALTiler.cpp \
+    && grep -q '#include "gdaloverviewdataset.cpp"' /src/ctb/src/GDALTiler.cpp \
+    && cmake -S /src/ctb -B /src/ctb/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /src/ctb/build -j$(nproc) \
+    && cmake --install /src/ctb/build --prefix /usr/local
+
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -12,6 +37,9 @@ RUN apt-get update \
         gdal-bin \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ctb-builder /usr/local /usr/local
+RUN ldconfig && command -v ctb-tile
 
 WORKDIR /app
 

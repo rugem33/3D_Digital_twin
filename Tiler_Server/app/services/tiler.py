@@ -31,6 +31,8 @@ def build_mago_command(
 ) -> list[str]:
     command = [
         "java",
+        f"-Xms{config.JAVA_XMS}",
+        f"-Xmx{config.JAVA_XMX}",
         "-jar",
         str(config.MAGO_TILER_JAR),
         "-i",

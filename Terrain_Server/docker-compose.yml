@@ -1,0 +1,14 @@
+services:
+  terrain-server:
+    build:
+      context: ..
+      dockerfile: Terrain_Server/Dockerfile
+    container_name: terrain-server
+    ports:
+      - "0.0.0.0:5001:5001"
+    volumes:
+      - terrain_tiles:/app/tiles
+    restart: unless-stopped
+
+volumes:
+  terrain_tiles:

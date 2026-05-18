@@ -18,6 +18,7 @@ DEM → quantized-mesh 타일 변환 도우미
 
 import argparse
 import json
+import math
 import struct
 import subprocess
 import sys
@@ -28,6 +29,94 @@ TILES_DIR  = Path(__file__).parent / "tiles"
 WORK_DIR   = Path(__file__).parent / "_work"
 DOCKER_IMG = "tumgis/ctb-quantized-mesh"
 NODATA_VAL = -9999.0          # ctb-tile / gdalwarp 공통 nodata
+LOW_ZOOM_FIX_THRESHOLD = 4
+FLAT_ZOOM_LEVELS = {7}
+
+
+def clear_tiles_dir():
+    """Keep the tiles directory itself, but remove its generated contents."""
+    TILES_DIR.mkdir(exist_ok=True)
+    for child in TILES_DIR.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+
+def tile_bounds(z: int, x: int, y_tms: int):
+    x_count = 2 ** (z + 1)
+    y_count = 2 ** z
+    lon_min = x / x_count * 360.0 - 180.0
+    lon_max = (x + 1) / x_count * 360.0 - 180.0
+    lat_min = y_tms / y_count * 180.0 - 90.0
+    lat_max = (y_tms + 1) / y_count * 180.0 - 90.0
+    return lon_min, lat_min, lon_max, lat_max
+
+
+def to_ecef(lon_deg: float, lat_deg: float, h: float = 0.0):
+    a = 6378137.0
+    e2 = 0.00669437999014
+    lon = math.radians(lon_deg)
+    lat = math.radians(lat_deg)
+    n = a / math.sqrt(1 - e2 * math.sin(lat) ** 2)
+    return (
+        (n + h) * math.cos(lat) * math.cos(lon),
+        (n + h) * math.cos(lat) * math.sin(lon),
+        (n * (1 - e2) + h) * math.sin(lat),
+    )
+
+
+def zigzag(delta: int) -> int:
+    return delta * 2 if delta >= 0 else -delta * 2 - 1
+
+
+def delta_zigzag(values: list[int]) -> list[int]:
+    out, prev = [], 0
+    for value in values:
+        out.append(zigzag(value - prev))
+        prev = value
+    return out
+
+
+def encode_high_water_mark(indices: list[int]) -> list[int]:
+    encoded = []
+    highest = 0
+    for index in indices:
+        encoded.append(highest - index)
+        if index == highest:
+            highest += 1
+    return encoded
+
+
+def make_flat_tile(z: int, x: int, y: int, h_max: float = 0.0) -> bytes:
+    """Create a minimal quantized-mesh tile with a valid ECEF center."""
+    lon_min, lat_min, lon_max, lat_max = tile_bounds(z, x, y)
+    cx, cy, cz = to_ecef((lon_min + lon_max) / 2, (lat_min + lat_max) / 2)
+    kx, ky, kz = to_ecef(lon_min, lat_min)
+    a = 6378137.0
+    radius = max(math.dist((cx, cy, cz), (kx, ky, kz)), 1.0)
+
+    header = struct.pack("<ddd", cx, cy, cz)
+    header += struct.pack("<ff", 0.0, float(h_max))
+    header += struct.pack("<dddd", cx, cy, cz, radius)
+    header += struct.pack("<ddd", cx / a, cy / a, cz / a)
+
+    u = [0, 32767, 0, 32767]
+    v = [0, 0, 32767, 32767]
+    h = [0, 0, 0, 0]
+    vertex_data = struct.pack("<I", 4)
+    vertex_data += struct.pack("<4H", *delta_zigzag(u))
+    vertex_data += struct.pack("<4H", *delta_zigzag(v))
+    vertex_data += struct.pack("<4H", *delta_zigzag(h))
+
+    triangle_indices = encode_high_water_mark([0, 1, 2, 1, 3, 2])
+    index_data = struct.pack("<I", 2) + struct.pack("<6H", *triangle_indices)
+
+    def edge(a_: int, b_: int):
+        return struct.pack("<I", 2) + struct.pack("<2H", a_, b_)
+
+    edge_data = edge(0, 2) + edge(0, 1) + edge(1, 3) + edge(2, 3)
+    return header + vertex_data + index_data + edge_data
 
 
 # ────────────────────────────────────────────────────────────
@@ -260,7 +349,7 @@ def step1_convert_to_wgs84(input_path: Path, bounds=None, nodata=NODATA_VAL) -> 
         return input_path
 
     run(
-        f'gdalwarp -t_srs EPSG:4326 -r bilinear '
+        f'gdalwarp -overwrite -t_srs EPSG:4326 -r bilinear '
         f'-srcnodata {nodata} -dstnodata {nodata} '
         f'{clip_opt} -of GTiff -co COMPRESS=DEFLATE '
         f'"{input_path}" "{output}"',
@@ -293,7 +382,7 @@ def step2_generate_tiles(wgs84_tif: Path, max_zoom: int, nodata=NODATA_VAL,
         f'-v "{work_dir_docker}:/work" '
         f'-v "{tiles_dir_docker}:/tiles" '
         f'{DOCKER_IMG} '
-        f'ctb-tile -f Mesh -C '
+        f'ctb-tile -f Mesh '
         f'-s {max_zoom} -e 0 '
         f'-o /tiles /work/{tif_name}',
         "ctb-tile 실행"
@@ -321,6 +410,52 @@ def step3_generate_layer_json(max_zoom: int, bounds):
     out.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\n[3단계] layer.json 생성: {out}")
     print(f"         bounds: {[round(v,3) for v in bounds]}")
+
+
+def get_dem_max_height(tif_path: Path) -> float:
+    """Return DEM maximum height for low-zoom terrain fallback tiles."""
+    result = subprocess.run(
+        f'gdalinfo -stats -json "{tif_path}"',
+        shell=True, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        try:
+            info = json.loads(result.stdout)
+            bands = info.get("bands", [])
+            if bands and bands[0].get("maximum") is not None:
+                return float(bands[0]["maximum"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+    print("[경고] DEM 최대 고도 감지 실패. 저줌 보정 기본값 9000m 사용.")
+    return 9000.0
+
+
+def fix_low_zoom_tiles(dem_max_height: float) -> int:
+    """Replace low-zoom ctb-tile output with stable flat quantized-mesh tiles."""
+    replaced = 0
+    if not TILES_DIR.exists():
+        return replaced
+
+    for z_dir in sorted(TILES_DIR.iterdir(), key=lambda d: int(d.name) if d.name.isdigit() else 999):
+        if not z_dir.is_dir() or not z_dir.name.isdigit():
+            continue
+        z = int(z_dir.name)
+        if z not in FLAT_ZOOM_LEVELS and z > LOW_ZOOM_FIX_THRESHOLD:
+            continue
+
+        for x_dir in z_dir.iterdir():
+            if not x_dir.is_dir() or not x_dir.name.isdigit():
+                continue
+            x = int(x_dir.name)
+            for tile_file in x_dir.glob("*.terrain"):
+                try:
+                    y = int(tile_file.stem)
+                except ValueError:
+                    continue
+                tile_file.write_bytes(make_flat_tile(z, x, y, h_max=dem_max_height))
+                replaced += 1
+
+    return replaced
 
 
 def step4_verify_tiles():
@@ -464,10 +599,14 @@ def main():
         d_lon_min = d_lat_min = d_lon_max = d_lat_max = None
 
     nodata = args.nodata if args.nodata is not None else detected_nodata
-    bounds = args.bounds
-    if bounds is None and all(v is not None for v in [d_lon_min, d_lat_min, d_lon_max, d_lat_max]):
-        bounds = [d_lon_min, d_lat_min, d_lon_max, d_lat_max]
-        print(f"[자동 감지] bounds = {[round(v,3) for v in bounds]}")
+    source_bounds = None
+    if all(v is not None for v in [d_lon_min, d_lat_min, d_lon_max, d_lat_max]):
+        source_bounds = [d_lon_min, d_lat_min, d_lon_max, d_lat_max]
+        print(f"[자동 감지] source bounds = {[round(v,3) for v in source_bounds]}")
+
+    # 자동 감지 bounds는 원본 CRS 기준일 수 있으므로 gdalwarp -te에는 사용하지 않는다.
+    # 사용자가 명시한 bounds만 EPSG:4326 clipping 범위로 처리한다.
+    clip_bounds = args.bounds
 
     # ctb-tile Docker 이미지 확인
     if not check_docker_image():
@@ -475,20 +614,30 @@ def main():
         run(f"docker pull {DOCKER_IMG}", "ctb-tile 이미지 다운로드")
 
     # 기존 tiles 정리 (잘못 생성된 타일 제거)
-    if TILES_DIR.exists():
-        print(f"\n[정리] 기존 tiles 폴더 삭제 중...")
-        shutil.rmtree(TILES_DIR)
-    TILES_DIR.mkdir()
+    print(f"\n[정리] 기존 tiles 폴더 내용 삭제 중...")
+    clear_tiles_dir()
 
     # 변환 실행
     if gdal_ok:
-        wgs84 = step1_convert_to_wgs84(input_path, bounds, nodata)
+        wgs84 = step1_convert_to_wgs84(input_path, clip_bounds, nodata)
     else:
         print("[경고] GDAL 없음 — WGS84 변환 생략. 입력 파일을 직접 사용합니다.")
         wgs84 = input_path
 
-    step2_generate_tiles(wgs84, args.max_zoom, nodata, bounds)
-    step3_generate_layer_json(args.max_zoom, bounds or [-180, -90, 180, 90])
+    terrain_bounds = clip_bounds
+    if wgs84.suffix.lower() in (".tif", ".tiff"):
+        _, w_lon_min, w_lat_min, w_lon_max, w_lat_max = detect_nodata_and_bounds(wgs84)
+        if all(v is not None for v in [w_lon_min, w_lat_min, w_lon_max, w_lat_max]):
+            terrain_bounds = [w_lon_min, w_lat_min, w_lon_max, w_lat_max]
+
+    step2_generate_tiles(wgs84, args.max_zoom, nodata, terrain_bounds)
+
+    dem_max_height = get_dem_max_height(wgs84)
+    print(f"\n[저줌 보정] DEM 최대 고도: {dem_max_height:.1f}m")
+    replaced = fix_low_zoom_tiles(dem_max_height)
+    print(f"[저줌 보정] 교체된 타일: {replaced}개 (z<={LOW_ZOOM_FIX_THRESHOLD}, z={sorted(FLAT_ZOOM_LEVELS)})")
+
+    step3_generate_layer_json(args.max_zoom, terrain_bounds or [-180, -90, 180, 90])
     step4_verify_tiles()
 
     tile_count = sum(1 for _ in TILES_DIR.rglob("*.terrain"))

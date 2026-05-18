@@ -23,14 +23,23 @@ Unity 연결:
 import struct
 import math
 import json
+import subprocess
+import sys
+import threading
+import uuid
 from pathlib import Path
 from flask import Flask, Response, request
 
 app  = Flask(__name__)
 PORT = 5001
 
-# 타일 파일 저장 위치 (process_dem.py 출력과 동일)
-TILES_DIR = Path(__file__).parent / "tiles"
+TILES_DIR   = Path(__file__).parent / "tiles"
+UPLOADS_DIR = Path(__file__).parent / "_uploads"
+PROCESS_DEM = Path(__file__).parent / "process_dem.py"
+
+# 변환 작업 상태 저장 (job_id → dict)
+_jobs: dict[str, dict] = {}
+_convert_lock = threading.Lock()  # 동시 변환 방지
 
 
 # ────────────────────────────────────────────────────────────
@@ -101,8 +110,9 @@ def make_flat_tile(z: int, x: int, y: int) -> bytes:
     vdata += struct.pack('<4H', *_delta_zigzag(v))
     vdata += struct.pack('<4H', *_delta_zigzag(h))
 
+    # high watermark 인코딩: indices [0,1,2,1,3,2] → [0,0,0,2,0,2]
     idata  = struct.pack('<I', 2)
-    idata += struct.pack('<6H', 0, 1, 2, 1, 3, 2)
+    idata += struct.pack('<6H', 0, 0, 0, 2, 0, 2)
 
     def edge(a, b):
         return struct.pack('<I', 2) + struct.pack('<2I', a, b)
@@ -116,22 +126,45 @@ def make_flat_tile(z: int, x: int, y: int) -> bytes:
 # ────────────────────────────────────────────────────────────
 
 def _scan_tiles():
-    """tiles/ 폴더에서 줌 레벨 범위와 타일 수 반환"""
+    """tiles/ 폴더에서 줌 레벨 범위, 타일 수, available 배열 반환"""
     if not TILES_DIR.exists():
-        return 0, 0, 0
+        return 0, 0, 0, []
 
-    zoom_levels = set()
+    zoom_set = set()
     count = 0
+    # {z: {y: [x, ...]}} 구조로 수집
+    tile_map: dict = {}
     for f in TILES_DIR.rglob("*.terrain"):
         try:
-            zoom_levels.add(int(f.parts[-3]))
+            z = int(f.parts[-3])
+            x = int(f.parts[-2])
+            y = int(f.stem)
+            zoom_set.add(z)
             count += 1
+            tile_map.setdefault(z, {}).setdefault(y, []).append(x)
         except (ValueError, IndexError):
             pass
 
-    if not zoom_levels:
-        return 0, 0, 0
-    return min(zoom_levels), max(zoom_levels), count
+    if not zoom_set:
+        return 0, 0, 0, []
+
+    min_z, max_z = min(zoom_set), max(zoom_set)
+
+    available = []
+    for z in range(min_z, max_z + 1):
+        level = []
+        yz = tile_map.get(z, {})
+        for y, xs in sorted(yz.items()):
+            xs_sorted = sorted(xs)
+            level.append({
+                "startX": xs_sorted[0],
+                "endX":   xs_sorted[-1],
+                "startY": y,
+                "endY":   y,
+            })
+        available.append(level)
+
+    return min_z, max_z, count, available
 
 
 # ────────────────────────────────────────────────────────────
@@ -147,32 +180,31 @@ def cors(resp):
 
 @app.route("/layer.json")
 def layer_json():
-    # tiles/layer.json 이 있으면 그걸 우선 사용 (ctb-tile 생성본)
+    min_z, max_z, count, available = _scan_tiles()
+    host = request.host_url.rstrip("/")
+
     ctb_meta = TILES_DIR / "layer.json"
     if ctb_meta.exists():
         data = json.loads(ctb_meta.read_text(encoding="utf-8"))
-        host = request.host_url.rstrip("/")
-        # tiles URL만 현재 서버 주소로 교체
-        data["tiles"] = [f"{host}/{{z}}/{{x}}/{{y}}.terrain"]
-        print("[META] ctb layer.json 제공")
-        return Response(json.dumps(data, indent=2), content_type="application/json")
+        data["tiles"]     = [f"{host}/{{z}}/{{x}}/{{y}}.terrain"]
+        data["available"] = available
+        print(f"[META] ctb layer.json 제공 (available: {sum(len(l) for l in available)} ranges)")
+    else:
+        data = {
+            "tilejson":    "2.1.0",
+            "format":      "quantized-mesh-1.0",
+            "version":     "1.0.0",
+            "scheme":      "tms",
+            "tiles":       [f"{host}/{{z}}/{{x}}/{{y}}.terrain"],
+            "bounds":      [-180.0, -90.0, 180.0, 90.0],
+            "minzoom":     min_z,
+            "maxzoom":     max(max_z, 12),
+            "available":   available,
+            "description": "RoadTools 자체 지형 서버",
+            "attribution": "RoadTools",
+        }
+        print("[META] 자동 생성 layer.json 제공")
 
-    # 없으면 자동 생성
-    min_z, max_z, _ = _scan_tiles()
-    host = request.host_url.rstrip("/")
-    data = {
-        "tilejson":    "2.1.0",
-        "format":      "quantized-mesh-1.0",
-        "version":     "1.0.0",
-        "scheme":      "tms",
-        "tiles":       [f"{host}/{{z}}/{{x}}/{{y}}.terrain"],
-        "bounds":      [-180.0, -90.0, 180.0, 90.0],
-        "minzoom":     min_z,
-        "maxzoom":     max(max_z, 12),
-        "description": "RoadTools 자체 지형 서버",
-        "attribution": "RoadTools",
-    }
-    print("[META] 자동 생성 layer.json 제공")
     return Response(json.dumps(data, indent=2), content_type="application/json")
 
 
@@ -203,7 +235,7 @@ def tile(z, x, y):
 
 @app.route("/status")
 def status():
-    min_z, max_z, count = _scan_tiles()
+    min_z, max_z, count, available = _scan_tiles()
     return Response(json.dumps({
         "status":     "ok",
         "tiles_dir":  str(TILES_DIR),
@@ -212,6 +244,122 @@ def status():
         "max_zoom":   max_z,
         "layer_json": (TILES_DIR / "layer.json").exists(),
     }, indent=2), content_type="application/json")
+
+
+@app.route("/api/terrain/convert", methods=["POST", "OPTIONS"])
+def terrain_convert():
+    if request.method == "OPTIONS":
+        return Response(status=200)
+
+    dem_file = request.files.get("demFile") or request.files.get("tif")
+    if dem_file is None:
+        return Response('{"error":"demFile required"}', status=400,
+                        content_type="application/json")
+
+    max_zoom  = int(request.form.get("maxZoom", "12"))
+    job_id    = uuid.uuid4().hex
+    layer_url = f"{request.host_url.rstrip('/')}/layer.json"
+
+    UPLOADS_DIR.mkdir(exist_ok=True)
+    filename   = dem_file.filename or "dem.tif"
+    tif_path   = UPLOADS_DIR / f"{job_id}_{filename}"
+    dem_file.save(str(tif_path))
+
+    _jobs[job_id] = {
+        "jobId":        job_id,
+        "status":       "running",
+        "progress":     0,
+        "progressText": "TIF 수신 완료",
+        "layerUrl":     layer_url,
+        "layer_url":    layer_url,
+    }
+
+    threading.Thread(
+        target=_run_process_dem,
+        args=(job_id, tif_path, max_zoom),
+        daemon=True,
+    ).start()
+
+    return Response(
+        json.dumps({
+            "jobId":     job_id,
+            "status":    "running",
+            "statusUrl": f"{request.host_url.rstrip('/')}/api/terrain/jobs/{job_id}/status",
+        }),
+        status=202,
+        content_type="application/json",
+    )
+
+
+@app.route("/api/terrain/jobs/<job_id>/status")
+def terrain_job_status(job_id):
+    job = _jobs.get(job_id)
+    if job is None:
+        return Response(
+            json.dumps({"error": "job not found", "jobId": job_id}),
+            status=404, content_type="application/json",
+        )
+    return Response(json.dumps(job), content_type="application/json")
+
+
+def _run_process_dem(job_id: str, tif_path: Path, max_zoom: int) -> None:
+    """백그라운드 스레드: process_dem.py 실행 후 상태 업데이트"""
+    with _convert_lock:
+        try:
+            _jobs[job_id].update({"progress": 10, "progressText": "process_dem.py 실행 중..."})
+            print(f"[CONVERT] job={job_id}  tif={tif_path.name}  max_zoom={max_zoom}")
+
+            proc = subprocess.Popen(
+                [sys.executable, str(PROCESS_DEM),
+                 "--input", str(tif_path),
+                 "--max-zoom", str(max_zoom)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+
+            # 로그를 실시간으로 터미널에 출력하며 진행 상황 파싱
+            for line in proc.stdout:
+                line = line.rstrip()
+                print(f"[CONVERT] {line}")
+                if "단계" in line or "step" in line.lower():
+                    _jobs[job_id].update({"progressText": line})
+
+            proc.wait(timeout=7200)  # 최대 2시간
+
+            if tif_path.exists():
+                tif_path.unlink()
+
+            if proc.returncode != 0:
+                _jobs[job_id].update({
+                    "status":       "failed",
+                    "error":        f"process_dem.py 종료 코드 {proc.returncode}",
+                    "progressText": "변환 실패",
+                })
+                print(f"[CONVERT] FAILED job={job_id}  rc={proc.returncode}")
+                return
+
+            _jobs[job_id].update({
+                "status":       "completed",
+                "progress":     100,
+                "progressText": "변환 완료",
+            })
+            print(f"[CONVERT] DONE job={job_id}  → {_jobs[job_id]['layerUrl']}")
+
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _jobs[job_id].update({
+                "status": "failed",
+                "error":  "타임아웃 (2시간 초과)",
+                "progressText": "타임아웃",
+            })
+        except Exception as exc:
+            _jobs[job_id].update({
+                "status": "failed",
+                "error":  str(exc),
+                "progressText": f"오류: {exc}",
+            })
+            print(f"[CONVERT] ERROR job={job_id}  {exc}")
 
 
 @app.route("/health")
@@ -225,7 +373,8 @@ def health():
 
 if __name__ == "__main__":
     TILES_DIR.mkdir(exist_ok=True)
-    min_z, max_z, count = _scan_tiles()
+    UPLOADS_DIR.mkdir(exist_ok=True)
+    min_z, max_z, count, _ = _scan_tiles()
 
     print("=" * 60)
     print("  RoadTools 자체 지형 서버")

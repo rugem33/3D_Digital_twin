@@ -1,5 +1,7 @@
+using System.Collections;
 using CesiumForUnity;
 using UnityEngine;
+using UnityEngine.Networking;
 
 namespace Rugem.RoadTools
 {
@@ -10,17 +12,6 @@ namespace Rugem.RoadTools
         Ellipsoid    // 외부 서비스 없음 — 평탄 타원체
     }
 
-    /// <summary>
-    /// Cesium3DTileset의 지형 데이터 소스를 런타임에 전환합니다.
-    ///
-    /// 사용법:
-    ///   1. 씬의 아무 GameObject에 이 컴포넌트를 추가합니다.
-    ///   2. Target Tileset 에 Cesium3DTileset GameObject를 연결합니다.
-    ///   3. 방식 C 테스트 시 Tools/terrain_test_server.py 를 먼저 실행합니다.
-    ///      > pip install flask
-    ///      > python Tools/terrain_test_server.py
-    ///   4. Terrain Url 에 서버 주소를 입력하고 Play 하면 됩니다.
-    /// </summary>
     [AddComponentMenu("RoadTools/Terrain Source Switcher")]
     public class TerrainSourceSwitcher : MonoBehaviour
     {
@@ -35,19 +26,25 @@ namespace Rugem.RoadTools
         [SerializeField] private long _ionAssetId = 1;
 
         [Header("방식 C — 커스텀 URL")]
-        [Tooltip("quantized-mesh 서버의 layer.json 전체 URL\n" +
-                 "로컬 테스트: http://localhost:5001/layer.json\n" +
-                 "실서버: https://your-server.com/terrain/layer.json")]
+        [Tooltip("quantized-mesh 서버의 layer.json URL\n예: http://localhost:5001/layer.json")]
         [SerializeField] private string _terrainUrl = "http://localhost:5001/layer.json";
 
-        public TerrainSourceMode CurrentMode => _mode;
+        [Header("TIF → 지형 변환 서버")]
+        [Tooltip("TIF 파일을 변환하는 지형 서버 URL\n예: http://localhost:5001")]
+        [SerializeField] private string _terrainConvertServerUrl = "http://localhost:5001";
+
+        [HideInInspector]
+        [SerializeField] private string _demTifPath = "";
+
+        public TerrainSourceMode CurrentMode          => _mode;
+        public string             TerrainConvertServerUrl => _terrainConvertServerUrl;
+        public string             DemTifPath          => _demTifPath;
 
         void Start()
         {
             Apply(_mode);
         }
 
-        /// <summary>지형 소스를 지정 모드로 전환합니다.</summary>
         public void Apply(TerrainSourceMode mode)
         {
             if (_tileset == null)
@@ -63,33 +60,113 @@ namespace Rugem.RoadTools
                 case TerrainSourceMode.CesiumIon:
                     _tileset.tilesetSource = CesiumDataSource.FromCesiumIon;
                     _tileset.ionAssetID    = _ionAssetId;
-                    Debug.Log($"[TerrainSwitcher] Ion 모드 (Asset ID: {_ionAssetId})");
+                    Debug.Log($"[TerrainSwitcher] Ion 모드 적용 — Asset ID: {_ionAssetId}");
                     break;
 
                 case TerrainSourceMode.CustomUrl:
                     if (string.IsNullOrWhiteSpace(_terrainUrl))
                     {
-                        Debug.LogError("[TerrainSwitcher] Terrain Url이 비어 있습니다.");
+                        Debug.LogError("[TerrainSwitcher] Terrain URL이 비어 있습니다.");
                         return;
                     }
                     _tileset.tilesetSource = CesiumDataSource.FromUrl;
                     _tileset.url           = _terrainUrl;
-                    Debug.Log($"[TerrainSwitcher] 커스텀 URL 모드: {_terrainUrl}");
+                    Debug.Log($"[TerrainSwitcher] 커스텀 URL 적용 — {_terrainUrl}");
+                    StartCoroutine(ValidateUrlCoroutine(_terrainUrl));
                     break;
 
                 case TerrainSourceMode.Ellipsoid:
                     _tileset.tilesetSource = CesiumDataSource.FromEllipsoid;
-                    Debug.Log("[TerrainSwitcher] Ellipsoid 모드 (외부 서비스 없음)");
+                    Debug.Log("[TerrainSwitcher] Ellipsoid 모드 적용");
                     break;
             }
         }
 
-        /// <summary>커스텀 URL을 런타임에 교체하고 즉시 재로드합니다.</summary>
         public void SetCustomUrl(string url)
         {
             _terrainUrl = url;
             if (_mode == TerrainSourceMode.CustomUrl)
                 Apply(TerrainSourceMode.CustomUrl);
+        }
+
+        // ── URL 접근 및 layer.json + 타일 파일 검증 ──────────────────
+        public IEnumerator ValidateUrlCoroutine(string url)
+        {
+            Debug.Log($"[TerrainSwitcher] layer.json 접근 시도: {url}");
+
+            using var req = UnityWebRequest.Get(url);
+            req.timeout = 10;
+            yield return req.SendWebRequest();
+
+            if (req.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogError(
+                    $"[TerrainSwitcher] ✗ URL 접근 실패\n" +
+                    $"  URL    : {url}\n" +
+                    $"  오류   : {req.error}\n" +
+                    $"  HTTP   : {req.responseCode}\n" +
+                    $"  확인   : 서버 실행 여부 / 방화벽 / URL 오탈자");
+                yield break;
+            }
+
+            string body = req.downloadHandler.text;
+            Debug.Log($"[TerrainSwitcher] ✓ layer.json 수신 성공 ({body.Length} bytes)\n{body}");
+
+            // 필수 필드 검증
+            if (!body.Contains("\"tilejson\"") && !body.Contains("\"format\""))
+                Debug.LogWarning("[TerrainSwitcher] layer.json 경고: 'tilejson' 또는 'format' 필드 없음");
+
+            if (!body.Contains("quantized-mesh"))
+            {
+                Debug.LogWarning(
+                    "[TerrainSwitcher] layer.json 형식 경고\n" +
+                    "  'quantized-mesh' 포맷이 아닙니다.\n" +
+                    "  Cesium이 이 지형을 로드하지 못할 수 있습니다.");
+                yield break;
+            }
+
+            Debug.Log("[TerrainSwitcher] ✓ quantized-mesh 포맷 확인됨");
+
+            // available 배열 존재 여부 확인
+            if (!body.Contains("\"available\""))
+                Debug.LogWarning(
+                    "[TerrainSwitcher] layer.json 경고: 'available' 배열이 없습니다.\n" +
+                    "  Cesium은 available 배열로 어떤 줌 레벨/타일이 존재하는지 판단합니다.\n" +
+                    "  ctb-tile 변환 시 --no-overwrite 없이 재실행하거나 서버 설정을 확인하세요.");
+            else
+                Debug.Log("[TerrainSwitcher] ✓ available 배열 존재");
+
+            // ── 실제 타일 파일 0/0/0.terrain 접근 테스트 ────────────
+            string baseUrl = url.Contains("/layer.json")
+                ? url.Substring(0, url.LastIndexOf("/layer.json"))
+                : url.TrimEnd('/');
+            string tileUrl  = $"{baseUrl}/0/0/0.terrain";
+            Debug.Log($"[TerrainSwitcher] 루트 타일 접근 테스트: {tileUrl}");
+
+            using var tileReq = UnityWebRequest.Get(tileUrl);
+            tileReq.timeout = 10;
+            yield return tileReq.SendWebRequest();
+
+            if (tileReq.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogError(
+                    $"[TerrainSwitcher] ✗ 루트 타일 접근 실패 — HTTP {tileReq.responseCode}\n" +
+                    $"  URL  : {tileUrl}\n" +
+                    $"  오류 : {tileReq.error}\n" +
+                    $"  ▶ 서버가 .terrain 파일을 서빙하고 있지 않습니다.\n" +
+                    $"  ▶ ctb-tile 출력 폴더가 서버 루트와 일치하는지 확인하세요.\n" +
+                    $"  ▶ 예: Flask 서버의 TILES_DIR이 ctb-tile 출력 폴더를 가리켜야 합니다.");
+            }
+            else
+            {
+                int bytes = tileReq.downloadHandler.data?.Length ?? 0;
+                if (bytes < 100)
+                    Debug.LogWarning(
+                        $"[TerrainSwitcher] ⚠ 루트 타일 응답이 너무 작습니다 ({bytes} bytes)\n" +
+                        $"  정상 terrain 파일은 수 KB 이상입니다. 빈 파일이거나 변환 오류일 수 있습니다.");
+                else
+                    Debug.Log($"[TerrainSwitcher] ✓ 루트 타일(0/0/0.terrain) 정상 수신 — {bytes} bytes");
+            }
         }
     }
 }

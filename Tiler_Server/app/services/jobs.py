@@ -22,6 +22,7 @@ def start_conversion_job(
     options: TilerOptions,
     terrain_path: Path | None,
     attributes: dict[str, Any],
+    public_base_url: str = "",
 ) -> None:
     _write_status(
         job_id,
@@ -32,16 +33,16 @@ def start_conversion_job(
             "progress": 0,
             "progressText": "Upload received",
             "attributes": attributes,
-            "statusUrl": _public_url(f"/api/jobs/{job_id}/status"),
-            "logsUrl": _public_url(f"/api/jobs/{job_id}/logs"),
-            "eventsUrl": _public_url(f"/api/jobs/{job_id}/events"),
-            "stdoutLogUrl": _public_url(f"/outputs/{job_id}/mago_stdout.log"),
-            "stderrLogUrl": _public_url(f"/outputs/{job_id}/mago_stderr.log"),
+            "statusUrl": _public_url(f"/api/jobs/{job_id}/status", public_base_url),
+            "logsUrl": _public_url(f"/api/jobs/{job_id}/logs", public_base_url),
+            "eventsUrl": _public_url(f"/api/jobs/{job_id}/events", public_base_url),
+            "stdoutLogUrl": _public_url(f"/outputs/{job_id}/mago_stdout.log", public_base_url),
+            "stderrLogUrl": _public_url(f"/outputs/{job_id}/mago_stderr.log", public_base_url),
         },
     )
     thread = threading.Thread(
         target=_run_conversion_job,
-        args=(job_id, input_dir, output_dir, options, terrain_path, attributes),
+        args=(job_id, input_dir, output_dir, options, terrain_path, attributes, public_base_url),
         daemon=True,
     )
     thread.start()
@@ -72,6 +73,7 @@ def _run_conversion_job(
     options: TilerOptions,
     terrain_path: Path | None,
     attributes: dict[str, Any],
+    public_base_url: str = "",
 ) -> None:
     stdout_path = output_dir / "mago_stdout.log"
     stderr_path = output_dir / "mago_stderr.log"
@@ -91,11 +93,11 @@ def _run_conversion_job(
                 "progressText": "Job queued",
                 "command": command,
                 "attributes": attributes,
-                "stdoutLogUrl": _public_url(f"/outputs/{job_id}/{stdout_path.name}"),
-                "stderrLogUrl": _public_url(f"/outputs/{job_id}/{stderr_path.name}"),
-                "statusUrl": _public_url(f"/api/jobs/{job_id}/status"),
-                "logsUrl": _public_url(f"/api/jobs/{job_id}/logs"),
-                "eventsUrl": _public_url(f"/api/jobs/{job_id}/events"),
+                "stdoutLogUrl": _public_url(f"/outputs/{job_id}/{stdout_path.name}", public_base_url),
+                "stderrLogUrl": _public_url(f"/outputs/{job_id}/{stderr_path.name}", public_base_url),
+                "statusUrl": _public_url(f"/api/jobs/{job_id}/status", public_base_url),
+                "logsUrl": _public_url(f"/api/jobs/{job_id}/logs", public_base_url),
+                "eventsUrl": _public_url(f"/api/jobs/{job_id}/events", public_base_url),
             },
         )
 
@@ -151,10 +153,10 @@ def _run_conversion_job(
                 "stage": "completed",
                 "progress": 100,
                 "progressText": "Conversion completed",
-                "tilesetUrl": _public_url(f"/outputs/{job_id}/{tileset_path.relative_to(output_dir)}"),
-                "tileset_url": _public_url(f"/outputs/{job_id}/{tileset_path.relative_to(output_dir)}"),
-                "zipUrl": _public_url(f"/outputs/{job_id}/{zip_path.name}"),
-                "zip_url": _public_url(f"/outputs/{job_id}/{zip_path.name}"),
+                "tilesetUrl": _public_url(f"/outputs/{job_id}/{tileset_path.relative_to(output_dir)}", public_base_url),
+                "tileset_url": _public_url(f"/outputs/{job_id}/{tileset_path.relative_to(output_dir)}", public_base_url),
+                "zipUrl": _public_url(f"/outputs/{job_id}/{zip_path.name}", public_base_url),
+                "zip_url": _public_url(f"/outputs/{job_id}/{zip_path.name}", public_base_url),
             },
             merge=True,
         )
@@ -248,8 +250,10 @@ def _job_output_dir(job_id: str) -> Path:
     return config.OUTPUT_DIR / job_id
 
 
-def _public_url(path: str | Path) -> str:
+def _public_url(path: str | Path, public_base_url: str = "") -> str:
     clean_path = "/" + str(path).lstrip("/")
     if config.PUBLIC_BASE_URL:
         return f"{config.PUBLIC_BASE_URL}{clean_path}"
+    if public_base_url:
+        return f"{public_base_url.rstrip('/')}{clean_path}"
     return clean_path
