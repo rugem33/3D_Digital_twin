@@ -109,6 +109,10 @@ namespace Rugem.RoadTools
         }
 #endif
 
+#if UNITY_EDITOR
+        private bool _editorUploadInProgress;
+#endif
+
         private void Start()
         {
             if (_applyOnStart)
@@ -162,22 +166,22 @@ namespace Rugem.RoadTools
                     break;
 
                 case TerrainSourceMode.DemServer:
+                    if (!string.IsNullOrWhiteSpace(_demFilePath))
+                    {
+                        _demStatus = DemUploadStatus.Idle;
+                        StartCoroutine(UploadDemAndApply());
+                        Debug.Log($"[TerrainSwitcher] DEM server upload started: {_demFilePath} -> {_demServerUrl}");
+                        return;
+                    }
+
                     string resolvedUrl = ResolveTerrainUrl(TerrainSourceMode.DemServer);
-                    if (!string.IsNullOrWhiteSpace(resolvedUrl))
+                    if (string.IsNullOrWhiteSpace(resolvedUrl))
                     {
-                        ApplyUrl(resolvedUrl, "DEM server URL is empty.");
+                        Debug.LogError("[TerrainSwitcher] DEM file path is empty and no DEM server URL is available.");
                         return;
                     }
 
-                    if (string.IsNullOrWhiteSpace(_demFilePath))
-                    {
-                        Debug.LogError("[TerrainSwitcher] DEM file path is empty.");
-                        return;
-                    }
-
-                    _demStatus = DemUploadStatus.Idle;
-                    StartCoroutine(UploadDemAndApply());
-                    Debug.Log($"[TerrainSwitcher] DEM server upload started: {_demFilePath} -> {_demServerUrl}");
+                    ApplyUrl(resolvedUrl, "DEM server URL is empty.");
                     break;
             }
         }
@@ -308,6 +312,7 @@ namespace Rugem.RoadTools
             SetFailed($"Timed out waiting for DEM processing after {MaxPollCount * 3}s.");
         }
 
+#if UNITY_EDITOR
         private void ApplyEditMode(TerrainSourceMode mode)
         {
             switch (mode)
@@ -325,18 +330,183 @@ namespace Rugem.RoadTools
                     break;
 
                 case TerrainSourceMode.DemServer:
+                    if (!string.IsNullOrWhiteSpace(_demFilePath))
+                    {
+                        UploadDemAndApplyInEditor();
+                        break;
+                    }
+
                     string demUrl = ResolveTerrainUrl(TerrainSourceMode.DemServer);
                     if (!string.IsNullOrWhiteSpace(demUrl))
                     {
-                        ApplyUrl(demUrl, "");
+                        ApplyUrl(demUrl, "DEM server URL is empty.");
                     }
                     else
                     {
-                        Debug.LogWarning("[TerrainSwitcher] DEM server URL is not available. Set Dem Job Id or Terrain Url before applying.");
+                        Debug.LogWarning("[TerrainSwitcher] DEM file path is empty and no DEM server URL is available.");
                     }
                     break;
             }
         }
+
+        public void UploadDemAndApplyInEditor()
+        {
+            if (_editorUploadInProgress)
+            {
+                Debug.LogWarning("[TerrainSwitcher] DEM upload is already running.");
+                return;
+            }
+
+            _ = UploadDemAndApplyEditorAsync();
+        }
+
+        private async Task UploadDemAndApplyEditorAsync()
+        {
+            _editorUploadInProgress = true;
+            try
+            {
+                _demStatus = DemUploadStatus.Uploading;
+                _demStatusMessage = "Reading DEM file...";
+                MarkEditorDirty();
+
+                if (string.IsNullOrWhiteSpace(_demFilePath))
+                {
+                    SetFailed("DEM file path is empty.");
+                    return;
+                }
+
+                if (!File.Exists(_demFilePath))
+                {
+                    SetFailed($"File not found: {_demFilePath}");
+                    return;
+                }
+
+                byte[] fileBytes;
+                try
+                {
+                    fileBytes = await Task.Run(() => File.ReadAllBytes(_demFilePath));
+                }
+                catch (Exception ex)
+                {
+                    SetFailed($"File read failed: {ex.Message}");
+                    return;
+                }
+
+                string fileName = Path.GetFileName(_demFilePath);
+                string ext = Path.GetExtension(_demFilePath).ToLowerInvariant();
+                string mime = ext is ".tif" or ".tiff" ? "image/tiff" : "application/octet-stream";
+                _demStatusMessage = $"Uploading DEM ({fileBytes.Length / 1048576} MB)...";
+                MarkEditorDirty();
+
+                var form = new List<IMultipartFormSection>
+                {
+                    new MultipartFormFileSection("demFile", fileBytes, fileName, mime),
+                    new MultipartFormDataSection("maxZoom", _demMaxZoom.ToString()),
+                };
+
+                string uploadUrl = TrimTrailingSlash(_demServerUrl) + "/api/terrain/upload";
+                using (UnityWebRequest uploadReq = UnityWebRequest.Post(uploadUrl, form))
+                {
+                    await SendEditorRequest(uploadReq);
+                    if (uploadReq.result != UnityWebRequest.Result.Success)
+                    {
+                        SetFailed($"Upload failed: {uploadReq.error}");
+                        return;
+                    }
+
+                    UploadResponse uploadResp;
+                    try
+                    {
+                        uploadResp = JsonUtility.FromJson<UploadResponse>(uploadReq.downloadHandler.text);
+                    }
+                    catch
+                    {
+                        SetFailed("Failed to parse upload response.");
+                        return;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(uploadResp.jobId))
+                    {
+                        SetFailed("Upload response did not include jobId.");
+                        return;
+                    }
+
+                    _demJobId = uploadResp.jobId;
+                    _terrainUrl = BuildDemLayerUrl(_demJobId);
+                    MarkEditorDirty();
+                }
+
+                _demStatus = DemUploadStatus.Processing;
+                string statusUrl = TrimTrailingSlash(_demServerUrl) + $"/api/terrain/jobs/{_demJobId}/status";
+
+                for (int pollCount = 0; pollCount < MaxPollCount; pollCount++)
+                {
+                    await Task.Delay(3000);
+
+                    using UnityWebRequest req = UnityWebRequest.Get(statusUrl);
+                    await SendEditorRequest(req);
+
+                    if (req.result != UnityWebRequest.Result.Success)
+                    {
+                        _demStatusMessage = $"Checking status... ({req.error})";
+                        MarkEditorDirty();
+                        continue;
+                    }
+
+                    StatusResponse sr;
+                    try
+                    {
+                        sr = JsonUtility.FromJson<StatusResponse>(req.downloadHandler.text);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    _demStatusMessage = $"Processing: {sr.stage} ({sr.progress}%)";
+                    MarkEditorDirty();
+
+                    if (sr.status == "completed")
+                    {
+                        _demStatus = DemUploadStatus.Completed;
+                        _demStatusMessage = $"Completed. Tiles: {sr.tileCount}";
+                        _terrainUrl = BuildDemLayerUrl(_demJobId);
+                        ApplyUrl(_terrainUrl, "DEM layer URL is empty.");
+                        MarkEditorDirty();
+                        Debug.Log($"[TerrainSwitcher] DEM terrain ready: {_terrainUrl}");
+                        return;
+                    }
+
+                    if (sr.status == "failed")
+                    {
+                        SetFailed($"Server processing failed: {sr.error}");
+                        return;
+                    }
+                }
+
+                SetFailed($"Timed out waiting for DEM processing after {MaxPollCount * 3}s.");
+            }
+            finally
+            {
+                _editorUploadInProgress = false;
+                MarkEditorDirty();
+            }
+        }
+
+        private static async Task SendEditorRequest(UnityWebRequest request)
+        {
+            UnityWebRequestAsyncOperation op = request.SendWebRequest();
+            while (!op.isDone)
+                await Task.Delay(100);
+        }
+
+        private void MarkEditorDirty()
+        {
+            EditorUtility.SetDirty(this);
+            if (!Application.isPlaying)
+                EditorApplication.QueuePlayerLoopUpdate();
+        }
+#endif
 
         private void ApplyIon()
         {

@@ -84,6 +84,7 @@ def create_app() -> Flask:
                 conversion["options"],
                 conversion["terrain_path"],
                 conversion["attributes"],
+                request.host_url.rstrip("/"),
             )
             return jsonify(
                 {
@@ -214,7 +215,7 @@ def create_app() -> Flask:
         dem_path = input_dir / f"dem{ext}"
         dem_file.save(str(dem_path))
 
-        start_terrain_job(job_id, dem_path, max_zoom)
+        start_terrain_job(job_id, dem_path, max_zoom, request.host_url.rstrip("/"))
 
         return jsonify({
             "jobId": job_id,
@@ -353,7 +354,7 @@ def public_url(path: str | Path) -> str:
     clean_path = "/" + str(path).lstrip("/")
     if config.PUBLIC_BASE_URL:
         return f"{config.PUBLIC_BASE_URL}{clean_path}"
-    return clean_path
+    return f"{request.host_url.rstrip('/')}{clean_path}"
 
 
 app = create_app()

@@ -51,9 +51,7 @@ namespace Rugem.RoadTools.Editor
 
             EditorGUILayout.Space(4);
             GUI.backgroundColor = sw.CurrentMode == TerrainSourceMode.DemServer ? Color.cyan : Color.white;
-            string demButtonLabel = !string.IsNullOrWhiteSpace(sw.ResolvedTerrainUrl)
-                ? "Apply DEM Server URL"
-                : Application.isPlaying ? "Upload DEM Server" : "Apply DEM Server URL";
+            string demButtonLabel = "Apply / Upload DEM Server";
             if (GUILayout.Button(demButtonLabel))
                 sw.Apply(TerrainSourceMode.DemServer);
             GUI.backgroundColor = Color.white;

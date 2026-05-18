@@ -38,7 +38,7 @@ FLAT_ZOOM_LEVELS = {7}
 # 작업 관리
 # ────────────────────────────────────────────────────────────
 
-def start_terrain_job(job_id: str, dem_path: Path, max_zoom: int) -> None:
+def start_terrain_job(job_id: str, dem_path: Path, max_zoom: int, public_base_url: str = "") -> None:
     config.TERRAIN_DIR.mkdir(parents=True, exist_ok=True)
     _write_status(job_id, {
         "status": "running",
@@ -46,11 +46,12 @@ def start_terrain_job(job_id: str, dem_path: Path, max_zoom: int) -> None:
         "progress": 0,
         "progressText": "작업 대기 중",
         "maxZoom": max_zoom,
-        "statusUrl": _pub(f"/api/terrain/jobs/{job_id}/status"),
+        "statusUrl": _pub(f"/api/terrain/jobs/{job_id}/status", public_base_url),
+        "layerUrl": _pub(f"/terrain/{job_id}/layer.json", public_base_url),
     })
     threading.Thread(
         target=_run_job,
-        args=(job_id, dem_path, max_zoom),
+        args=(job_id, dem_path, max_zoom, public_base_url),
         daemon=True,
     ).start()
 
@@ -110,7 +111,7 @@ def _read_dem_max_height(job_id: str) -> float:
 # 비동기 변환 실행
 # ────────────────────────────────────────────────────────────
 
-def _run_job(job_id: str, dem_path: Path, max_zoom: int) -> None:
+def _run_job(job_id: str, dem_path: Path, max_zoom: int, public_base_url: str = "") -> None:
     job_dir = config.TERRAIN_DIR / job_id
     wgs84_dir = job_dir / "wgs84"
     tiles_dir = _tiles_dir(job_id)
@@ -172,7 +173,7 @@ def _run_job(job_id: str, dem_path: Path, max_zoom: int) -> None:
             "tileCount": tile_count,
             "maxZoom": max_zoom,
             "demMaxHeight": dem_max_height,
-            "layerUrl": _pub(f"/terrain/{job_id}/layer.json"),
+            "layerUrl": _pub(f"/terrain/{job_id}/layer.json", public_base_url),
         }, merge=True)
 
     except Exception as exc:
@@ -523,6 +524,10 @@ def _write_status(job_id: str, payload: dict[str, Any], merge: bool = False) -> 
         raise
 
 
-def _pub(path: str) -> str:
+def _pub(path: str, public_base_url: str = "") -> str:
     clean = "/" + str(path).lstrip("/")
-    return f"{config.PUBLIC_BASE_URL}{clean}" if config.PUBLIC_BASE_URL else clean
+    if config.PUBLIC_BASE_URL:
+        return f"{config.PUBLIC_BASE_URL}{clean}"
+    if public_base_url:
+        return f"{public_base_url.rstrip('/')}{clean}"
+    return clean
