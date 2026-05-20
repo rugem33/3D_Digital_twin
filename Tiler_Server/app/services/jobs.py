@@ -1,6 +1,7 @@
 import json
 import re
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -22,6 +23,7 @@ def start_conversion_job(
     options: TilerOptions,
     terrain_path: Path | None,
     attributes: dict[str, Any],
+    public_base_url: str = "",
 ) -> None:
     _write_status(
         job_id,
@@ -32,16 +34,16 @@ def start_conversion_job(
             "progress": 0,
             "progressText": "Upload received",
             "attributes": attributes,
-            "statusUrl": _public_url(f"/api/jobs/{job_id}/status"),
-            "logsUrl": _public_url(f"/api/jobs/{job_id}/logs"),
-            "eventsUrl": _public_url(f"/api/jobs/{job_id}/events"),
-            "stdoutLogUrl": _public_url(f"/outputs/{job_id}/mago_stdout.log"),
-            "stderrLogUrl": _public_url(f"/outputs/{job_id}/mago_stderr.log"),
+            "statusUrl": _public_url(f"/api/jobs/{job_id}/status", public_base_url),
+            "logsUrl": _public_url(f"/api/jobs/{job_id}/logs", public_base_url),
+            "eventsUrl": _public_url(f"/api/jobs/{job_id}/events", public_base_url),
+            "stdoutLogUrl": _public_url(f"/outputs/{job_id}/mago_stdout.log", public_base_url),
+            "stderrLogUrl": _public_url(f"/outputs/{job_id}/mago_stderr.log", public_base_url),
         },
     )
     thread = threading.Thread(
         target=_run_conversion_job,
-        args=(job_id, input_dir, output_dir, options, terrain_path, attributes),
+        args=(job_id, input_dir, output_dir, options, terrain_path, attributes, public_base_url),
         daemon=True,
     )
     thread.start()
@@ -49,9 +51,14 @@ def start_conversion_job(
 
 def read_job_status(job_id: str) -> dict[str, Any] | None:
     status_path = _status_path(job_id)
-    if not status_path.exists():
+    # exists() 후 read_text() 사이 TOCTOU 경쟁 조건 방지 — EAFP 패턴 사용
+    try:
+        return json.loads(status_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return None
-    return json.loads(status_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        # 다른 스레드가 파일을 쓰는 도중 읽힌 경우 → 일시적 오류, None 반환
+        return None
 
 
 def read_job_logs(job_id: str, max_chars: int = 12000) -> dict[str, Any] | None:
@@ -72,6 +79,7 @@ def _run_conversion_job(
     options: TilerOptions,
     terrain_path: Path | None,
     attributes: dict[str, Any],
+    public_base_url: str = "",
 ) -> None:
     stdout_path = output_dir / "mago_stdout.log"
     stderr_path = output_dir / "mago_stderr.log"
@@ -91,11 +99,11 @@ def _run_conversion_job(
                 "progressText": "Job queued",
                 "command": command,
                 "attributes": attributes,
-                "stdoutLogUrl": _public_url(f"/outputs/{job_id}/{stdout_path.name}"),
-                "stderrLogUrl": _public_url(f"/outputs/{job_id}/{stderr_path.name}"),
-                "statusUrl": _public_url(f"/api/jobs/{job_id}/status"),
-                "logsUrl": _public_url(f"/api/jobs/{job_id}/logs"),
-                "eventsUrl": _public_url(f"/api/jobs/{job_id}/events"),
+                "stdoutLogUrl": _public_url(f"/outputs/{job_id}/{stdout_path.name}", public_base_url),
+                "stderrLogUrl": _public_url(f"/outputs/{job_id}/{stderr_path.name}", public_base_url),
+                "statusUrl": _public_url(f"/api/jobs/{job_id}/status", public_base_url),
+                "logsUrl": _public_url(f"/api/jobs/{job_id}/logs", public_base_url),
+                "eventsUrl": _public_url(f"/api/jobs/{job_id}/events", public_base_url),
             },
         )
 
@@ -151,10 +159,10 @@ def _run_conversion_job(
                 "stage": "completed",
                 "progress": 100,
                 "progressText": "Conversion completed",
-                "tilesetUrl": _public_url(f"/outputs/{job_id}/{tileset_path.relative_to(output_dir)}"),
-                "tileset_url": _public_url(f"/outputs/{job_id}/{tileset_path.relative_to(output_dir)}"),
-                "zipUrl": _public_url(f"/outputs/{job_id}/{zip_path.name}"),
-                "zip_url": _public_url(f"/outputs/{job_id}/{zip_path.name}"),
+                "tilesetUrl": _public_url(f"/outputs/{job_id}/{tileset_path.relative_to(output_dir)}", public_base_url),
+                "tileset_url": _public_url(f"/outputs/{job_id}/{tileset_path.relative_to(output_dir)}", public_base_url),
+                "zipUrl": _public_url(f"/outputs/{job_id}/{zip_path.name}", public_base_url),
+                "zip_url": _public_url(f"/outputs/{job_id}/{zip_path.name}", public_base_url),
             },
             merge=True,
         )
@@ -215,9 +223,15 @@ def _write_status(
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     status_path = output_dir / "status.json"
+
     data: dict[str, Any] = {}
-    if merge and status_path.exists():
-        data = json.loads(status_path.read_text(encoding="utf-8"))
+    if merge:
+        # EAFP: 읽기 실패 시 빈 dict 로 시작 (파일이 없거나 다른 스레드가 교체 중일 수 있음)
+        try:
+            data = json.loads(status_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+
     data.update(
         {
             "jobId": job_id,
@@ -226,9 +240,19 @@ def _write_status(
             **payload,
         }
     )
-    tmp_path = output_dir / "status.json.tmp"
-    tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp_path.replace(status_path)
+
+    # 고정 tmp 파일명 대신 유니크 tmp 파일 사용 → 다중 스레드 동시 쓰기 경쟁 방지
+    fd, tmp_name = tempfile.mkstemp(dir=output_dir, suffix=".tmp")
+    try:
+        with open(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        Path(tmp_name).replace(status_path)  # POSIX atomic rename
+    except Exception:
+        try:
+            Path(tmp_name).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _tail_text(path: Path, max_chars: int) -> str:
@@ -248,8 +272,10 @@ def _job_output_dir(job_id: str) -> Path:
     return config.OUTPUT_DIR / job_id
 
 
-def _public_url(path: str | Path) -> str:
+def _public_url(path: str | Path, public_base_url: str = "") -> str:
     clean_path = "/" + str(path).lstrip("/")
     if config.PUBLIC_BASE_URL:
         return f"{config.PUBLIC_BASE_URL}{clean_path}"
+    if public_base_url:
+        return f"{public_base_url.rstrip('/')}{clean_path}"
     return clean_path

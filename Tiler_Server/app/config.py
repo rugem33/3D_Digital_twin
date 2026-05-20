@@ -20,6 +20,13 @@ DEFAULT_SKIRT_HEIGHT = os.getenv("DEFAULT_SKIRT_HEIGHT", "10.0")
 CONVERT_TIMEOUT_SECONDS = int(os.getenv("CONVERT_TIMEOUT_SECONDS", "1800"))
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
+# JVM 힙 설정 — 미설정 시 GC 반복으로 전처리 속도 저하
+JAVA_XMS = os.getenv("JAVA_XMS", "512m")   # 초기 힙
+JAVA_XMX = os.getenv("JAVA_XMX", "4g")     # 최대 힙 (서버 가용 메모리의 70% 이하 권장)
+
+TERRAIN_DIR = Path(os.getenv("TERRAIN_DIR", str(DATA_DIR / "terrain_tiles"))).resolve()
+DEFAULT_TERRAIN_MAX_ZOOM = int(os.getenv("DEFAULT_TERRAIN_MAX_ZOOM", "12"))
+
 ALLOWED_EXTENSIONS = {
     ".shp",
     ".shx",
@@ -32,6 +39,8 @@ ALLOWED_EXTENSIONS = {
     ".zip",
     ".tif",
     ".tiff",
+    ".img",
+    ".hgt",
     ".json",
     ".geojson",
 }

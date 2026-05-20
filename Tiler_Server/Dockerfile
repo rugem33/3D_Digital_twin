@@ -13,6 +13,9 @@ RUN apt-get update \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Docker CLI만 복사 (DEM 타일 생성 시 호스트 Docker daemon에 ctb-tile 컨테이너 실행 위임)
+COPY --from=docker:25-cli /usr/local/bin/docker /usr/local/bin/docker
+
 WORKDIR /app
 
 COPY requirements.txt .

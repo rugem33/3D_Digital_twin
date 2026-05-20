@@ -260,7 +260,7 @@ def step1_convert_to_wgs84(input_path: Path, bounds=None, nodata=NODATA_VAL) -> 
         return input_path
 
     run(
-        f'gdalwarp -t_srs EPSG:4326 -r bilinear '
+        f'gdalwarp -overwrite -t_srs EPSG:4326 -r bilinear '
         f'-srcnodata {nodata} -dstnodata {nodata} '
         f'{clip_opt} -of GTiff -co COMPRESS=DEFLATE '
         f'"{input_path}" "{output}"',
