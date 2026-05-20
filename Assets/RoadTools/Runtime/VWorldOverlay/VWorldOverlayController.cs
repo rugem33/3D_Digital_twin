@@ -1,6 +1,10 @@
 using System.Collections;
 using CesiumForUnity;
 using UnityEngine;
+#if UNITY_EDITOR
+using UnityEditor;
+using UnityEditor.SceneManagement;
+#endif
 
 namespace Rugem.RoadTools
 {
@@ -41,16 +45,14 @@ namespace Rugem.RoadTools
         [SerializeField, Range(6, 19)] private int _maximumLevel = 19;
 
         [Header("크래시 방지")]
-        [Tooltip("오버레이 전환 중 일시 비활성화할 컴포넌트 (FirstPersonGPSController).\n" +
-                 "Cesium 네이티브 재구성 도중 SampleHeightMostDetailed가 호출되면\n" +
-                 "Cesium3DTileset.Update()에서 abort()가 발생하므로 반드시 연결할 것.")]
+        [Tooltip("오버레이 전환 중 일시 비활성화할 컴포넌트 (FirstPersonGPSController).")]
         [SerializeField] private MonoBehaviour _heightSamplerToDisable;
 
         private CesiumUrlTemplateRasterOverlay _overlay;
-        private bool _registered;
+        private Coroutine _switchCoroutine;
 
         public VWorldLayerType CurrentLayer   => _layerType;
-        public bool            IsOverlayActive => _registered && _overlay != null && _overlay.enabled;
+        public bool            IsOverlayActive => _overlay != null && _overlay.enabled;
 
         IEnumerator Start()
         {
@@ -60,36 +62,6 @@ namespace Rugem.RoadTools
                 yield break;
             }
 
-            if (_heightSamplerToDisable == null)
-                Debug.LogWarning("[VWorldOverlay] Height Sampler To Disable이 연결되지 않았습니다.\n" +
-                                 "FirstPersonGPSController를 연결하지 않으면 오버레이 전환 중 크래시가 발생할 수 있습니다.");
-
-            // 씬에 미리 배치된 컴포넌트가 있으면 즉시 비활성화 (잘못된 URL로 요청 방지)
-            var existing = _targetTileset.gameObject.GetComponent<CesiumUrlTemplateRasterOverlay>();
-            if (existing != null)
-            {
-                existing.enabled = false;
-                yield return null;
-                Destroy(existing);
-                yield return new WaitForSeconds(0.3f);
-            }
-
-            // 네이티브 Tileset 초기화 완료 대기
-            yield return null;
-            yield return null;
-
-            yield return StartCoroutine(ApplyOverlayRoutine(_layerType));
-        }
-
-        /// <summary>지정 레이어를 적용합니다.</summary>
-        public void ApplyOverlay(VWorldLayerType layer)
-        {
-            if (_targetTileset == null) return;
-            StartCoroutine(ApplyOverlayRoutine(layer));
-        }
-
-        private IEnumerator ApplyOverlayRoutine(VWorldLayerType layer)
-        {
             string key = VWorldApiKeyProvider.Resolve(_apiKey);
             if (string.IsNullOrEmpty(key))
             {
@@ -99,77 +71,153 @@ namespace Rugem.RoadTools
                 yield break;
             }
 
-            // GPS 높이 샘플링 중단
-            bool samplerWasEnabled = false;
-            if (_heightSamplerToDisable != null)
-            {
-                samplerWasEnabled = _heightSamplerToDisable.enabled;
-                _heightSamplerToDisable.enabled = false;
-            }
+            // 씬에 배치된 컴포넌트 재사용, 없으면 생성
+            _overlay = _targetTileset.gameObject.GetComponent<CesiumUrlTemplateRasterOverlay>();
+            if (_overlay == null)
+                _overlay = _targetTileset.gameObject.AddComponent<CesiumUrlTemplateRasterOverlay>();
 
-            yield return null;
-
-            // 기존 오버레이 파괴
-            if (_overlay != null)
-            {
-                _overlay.enabled = false;
-                yield return null;
-                Destroy(_overlay);
-                _overlay    = null;
-                _registered = false;
-                yield return new WaitForSeconds(0.5f);
-                yield return null;
-            }
-
-            // 새 오버레이 생성 (비활성 상태로 — 프로퍼티 설정 후 활성화)
-            _overlay = _targetTileset.gameObject.AddComponent<CesiumUrlTemplateRasterOverlay>();
+            // 비활성 상태로 만들고 프로퍼티 설정
             _overlay.enabled = false;
             yield return null;
 
-            // 공개 프로퍼티로 설정 (Refresh()는 disabled 상태라 no-op)
-            _overlay.templateUrl   = BuildUrl(key, layer);
-            _overlay.minimumLevel  = Mathf.Max(_minimumLevel, 6);
-            _overlay.maximumLevel  = Mathf.Min(_maximumLevel, 19);
-            _overlay.materialKey   = "overlay1";
+            _overlay.templateUrl  = BuildUrl(key, _layerType);
+            _overlay.minimumLevel = Mathf.Max(_minimumLevel, 6);
+            _overlay.maximumLevel = Mathf.Min(_maximumLevel, 19);
 
             yield return null;
 
-            // OnEnable → AddToTileset
             _overlay.enabled = true;
-            _registered      = true;
-            _layerType       = layer;
 
-            Debug.Log($"[VWorldOverlay] {layer} 등록 완료 — URL: {_overlay.templateUrl}");
-
-            yield return new WaitForSeconds(1.5f);
-
-            if (_heightSamplerToDisable != null)
-                _heightSamplerToDisable.enabled = samplerWasEnabled;
-
-            Debug.Log($"[VWorldOverlay] {layer} 적용 완료");
+            Debug.Log($"[VWorldOverlay] 적용 완료 — URL: {_overlay.templateUrl}");
         }
 
         /// <summary>오버레이를 비활성화합니다.</summary>
         public void RemoveOverlay()
         {
-            if (_overlay == null || !_registered) return;
+            if (_overlay == null && _targetTileset != null)
+                _overlay = _targetTileset.gameObject.GetComponent<CesiumUrlTemplateRasterOverlay>();
+
+            if (_overlay != null)
+                _overlay.enabled = false;
+
+#if UNITY_EDITOR
+            if (_overlay != null)
+                EditorUtility.SetDirty(_overlay);
+            EditorUtility.SetDirty(this);
+            EditorSceneManager.MarkSceneDirty(gameObject.scene);
+            EditorApplication.QueuePlayerLoopUpdate();
+#endif
+        }
+
+        /// <summary>지정 레이어를 적용합니다.</summary>
+        public void ApplyOverlay(VWorldLayerType layer) => SwitchLayer(layer);
+
+        /// <summary>레이어 전환.</summary>
+        public void SwitchLayer(VWorldLayerType layer)
+        {
+#if UNITY_EDITOR
+            if (!Application.isPlaying)
+            {
+                ApplyOverlayImmediate(layer, true);
+                return;
+            }
+#endif
+
+            if (_overlay == null) return;
+            if (_layerType == layer) return;
+            _layerType = layer;
+
+            string key = VWorldApiKeyProvider.Resolve(_apiKey);
+            if (string.IsNullOrEmpty(key)) return;
+
+            if (_switchCoroutine != null)
+                StopCoroutine(_switchCoroutine);
+
+            _switchCoroutine = StartCoroutine(SwitchRoutine(key, layer));
+        }
+
+        private IEnumerator SwitchRoutine(string key, VWorldLayerType layer)
+        {
+            if (_heightSamplerToDisable != null)
+                _heightSamplerToDisable.enabled = false;
+
+            // 이전 오버레이 제거 후 새 컴포넌트 생성 → 타일 캐시 완전 해제
             _overlay.enabled = false;
-            _registered      = false;
+            Destroy(_overlay);
+            yield return null;
+
+            _overlay = _targetTileset.gameObject.AddComponent<CesiumUrlTemplateRasterOverlay>();
+            _overlay.enabled      = false;
+            _overlay.templateUrl  = BuildUrl(key, layer);
+            _overlay.minimumLevel = Mathf.Max(_minimumLevel, 6);
+            _overlay.maximumLevel = Mathf.Min(_maximumLevel, 19);
+            yield return null;
+
+            _overlay.enabled = true;
+
+            yield return new WaitForSeconds(1.5f);
+
+            if (_heightSamplerToDisable != null)
+                _heightSamplerToDisable.enabled = true;
+
+            _switchCoroutine = null;
+            Debug.Log($"[VWorldOverlay] {layer} 전환 완료");
         }
 
         /// <summary>표시/숨김 전환.</summary>
         public void SetVisible(bool visible)
         {
-            if (_overlay == null) return;
-            if (visible  && !_registered) ApplyOverlay(_layerType);
-            if (!visible && _registered)  RemoveOverlay();
+            if (_overlay == null && _targetTileset != null)
+                _overlay = _targetTileset.gameObject.GetComponent<CesiumUrlTemplateRasterOverlay>();
+
+            if (_overlay != null)
+                _overlay.enabled = visible;
+
+#if UNITY_EDITOR
+            if (_overlay != null)
+                EditorUtility.SetDirty(_overlay);
+            EditorUtility.SetDirty(this);
+            EditorSceneManager.MarkSceneDirty(gameObject.scene);
+            EditorApplication.QueuePlayerLoopUpdate();
+#endif
         }
 
-        /// <summary>레이어 전환.</summary>
-        public void SwitchLayer(VWorldLayerType layer)
+        public void ApplyOverlayImmediate(VWorldLayerType layer, bool visible)
         {
-            if (layer == _layerType && IsOverlayActive) return;
-            ApplyOverlay(layer);
+            if (_targetTileset == null)
+            {
+                Debug.LogError("[VWorldOverlay] Target Tileset이 연결되지 않았습니다.");
+                return;
+            }
+
+            string key = VWorldApiKeyProvider.Resolve(_apiKey);
+            if (string.IsNullOrEmpty(key))
+            {
+                Debug.LogError("[VWorldOverlay] V-World API 키가 없습니다.\n" +
+                               "Resources/vworld_api_key.txt 에 키를 입력하거나\n" +
+                               "Inspector의 Api Key 필드에 직접 입력하세요.");
+                return;
+            }
+
+            _overlay = _targetTileset.gameObject.GetComponent<CesiumUrlTemplateRasterOverlay>();
+            if (_overlay == null)
+                _overlay = _targetTileset.gameObject.AddComponent<CesiumUrlTemplateRasterOverlay>();
+
+            _layerType = layer;
+            _overlay.enabled = false;
+            _overlay.templateUrl  = BuildUrl(key, layer);
+            _overlay.minimumLevel = Mathf.Max(_minimumLevel, 6);
+            _overlay.maximumLevel = Mathf.Min(_maximumLevel, 19);
+            _overlay.enabled = visible;
+
+#if UNITY_EDITOR
+            EditorUtility.SetDirty(_overlay);
+            EditorUtility.SetDirty(this);
+            EditorSceneManager.MarkSceneDirty(gameObject.scene);
+            EditorApplication.QueuePlayerLoopUpdate();
+#endif
+
+            Debug.Log($"[VWorldOverlay] 에디터 적용 완료 — URL: {_overlay.templateUrl}");
         }
 
         private string BuildUrl(string key, VWorldLayerType layer) =>

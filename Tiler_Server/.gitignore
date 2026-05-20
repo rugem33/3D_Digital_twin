@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+data/uploads/*
+!data/uploads/.gitkeep
+data/outputs/*
+!data/outputs/.gitkeep
+data/terrain_tiles/*
+!data/terrain_tiles/.gitkeep

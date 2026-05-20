@@ -1,0 +1,7 @@
+.git
+__pycache__/
+*.pyc
+.DS_Store
+data/uploads/*
+data/outputs/*
+data/terrain_tiles/*
