@@ -116,6 +116,7 @@ namespace Rugem.RoadTools
         private bool _gpsSubscribed;
         private int _heightSampleVersion;
         private Coroutine _iosPermissionCoroutine;
+        private const float NavigationMapSizeRatio = 0.22f;
 
         // 나침반 안정화
         private float[] _compassBuffer;
@@ -265,7 +266,7 @@ namespace Rugem.RoadTools
             float margin  = Mathf.Clamp(Screen.width * 0.03f, 14f, 28f);
             float btnSize = Mathf.Clamp(Screen.height * 0.090f, 70f, 90f);
             // 미니맵(화면 높이의 22%) 아래에 버튼 배치
-            float mapSize = Screen.height * MinimapController.MapSizeRatioConst;
+            float mapSize = Screen.height * NavigationMapSizeRatio;
             float btnY    = margin + mapSize + margin * 0.4f;
             float btnX    = Screen.width - btnSize - margin;
 
@@ -331,44 +332,6 @@ namespace Rugem.RoadTools
                 alignment = TextAnchor.MiddleCenter,
                 normal    = { textColor = new Color(0.76f, 0.88f, 1f, 1f) },
             };
-        }
-
-        // ── 위치 이동 (길찾기 연동) ────────────────────────────────────────────
-
-        /// <summary>
-        /// 카메라를 지정 위경도 위치로 즉시 이동합니다 (길찾기 "여기로 이동" 용).
-        /// 이동 후 Cesium 지형 높이를 비동기로 재샘플링합니다.
-        /// </summary>
-        public void TeleportTo(double latitude, double longitude)
-        {
-            ResolveDependencies();
-            if (_gpsService == null)
-            {
-                Debug.LogError("[FirstPersonGPS] TeleportTo: GPSLocationService가 연결되지 않았습니다.");
-                return;
-            }
-
-            EnsureGlobeAnchor();
-            if (_globeAnchor == null)
-            {
-                Debug.LogError("[FirstPersonGPS] TeleportTo: CesiumGlobeAnchor를 초기화할 수 없습니다.");
-                return;
-            }
-
-            Vector3 rawPos = _gpsService.ConvertToUnityPosition(latitude, longitude, 0.0);
-            float tempY    = rawPos.y + _eyeHeight;
-
-            _targetPosition      = new Vector3(rawPos.x, tempY, rawPos.z);
-            _globeAnchor.transform.position = _targetPosition;
-            _hasInitialPosition  = true;
-            _cachedGroundY       = float.MinValue; // 지면 높이 재감지 트리거
-            _lastGroundCheckXZ   = Vector2.zero;
-            _lastAcceptedXZ      = new Vector2(rawPos.x, rawPos.z); // 순간이동은 점프 가드에서 제외
-            _hasLastAcceptedXZ   = true;
-
-            // 새 위치에서 비동기 지면 높이 샘플링 시작
-            SampleAndUpdateGroundHeight(latitude, longitude, rawPos);
-            Debug.Log($"[FirstPersonGPS] 위치 이동 → 위도={latitude:F6}, 경도={longitude:F6}");
         }
 
         // ── 회전 모드 전환 ─────────────────────────────────────────────────────

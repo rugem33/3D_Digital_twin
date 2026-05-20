@@ -81,18 +81,12 @@ namespace Rugem.RoadTools
             int roadArea = NavMesh.GetAreaFromName("Road");
             _roadNavMeshAreaMask = roadArea >= 0 ? 1 << roadArea : NavMesh.AllAreas;
 
-            // Inspector에 _roadLayerMask 미설정 시 RoadAssetPlacer에서 자동 상속
+            // Inspector에 _roadLayerMask 미설정 시 "Road" 레이어를 자동 사용
             if (_roadLayerMask == 0)
             {
                 int roadLayer = LayerMask.NameToLayer("Road");
                 if (roadLayer >= 0)
                     _roadLayerMask = 1 << roadLayer;
-            }
-            if (_roadLayerMask == 0)
-            {
-                var placer = FindAnyObjectByType<RoadAssetPlacer>();
-                if (placer != null && placer.roadLayerMask != 0)
-                    _roadLayerMask = placer.roadLayerMask;
             }
         }
 

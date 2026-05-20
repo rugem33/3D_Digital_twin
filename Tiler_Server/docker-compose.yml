@@ -1,0 +1,32 @@
+services:
+  tiler-server:
+    build: .
+    container_name: tiler-server
+    ports:
+      - "0.0.0.0:8000:8000"
+    environment:
+      PUBLIC_BASE_URL: ""
+      DEFAULT_COORDINATE_CODE: "5186"
+      DEFAULT_HEIGHT_COLUMN: "height"
+      DEFAULT_SKIRT_HEIGHT: "10.0"
+      CONVERT_TIMEOUT_SECONDS: "1800"
+      MAX_UPLOAD_MB: "2048"
+      DEFAULT_TERRAIN_MAX_ZOOM: "12"
+      # ctb-tile 실행 시 --volumes-from 으로 참조할 자기 자신의 컨테이너 이름
+      SELF_CONTAINER_NAME: "tiler-server"
+      # JVM 힙 설정 — 서버 메모리에 맞게 조정 (가용 메모리의 70% 이하 권장)
+      JAVA_XMS: "512m"
+      JAVA_XMX: "4g"
+    volumes:
+      # named volume: Windows Docker Desktop에서 bind mount(./data:/data)보다 I/O가 3~10배 빠름
+      - tiler_data:/data
+      # Docker 소켓: DEM 타일 생성 시 호스트 Docker daemon에 ctb-tile 컨테이너 실행 위임
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: >
+      gunicorn --bind 0.0.0.0:8000 --workers 2 --timeout 1800
+      --access-logfile - --access-logformat "%(h)s %(r)s %(s)s"
+      app.main:app
+    restart: unless-stopped
+
+volumes:
+  tiler_data:

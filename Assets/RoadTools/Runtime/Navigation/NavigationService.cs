@@ -5,15 +5,12 @@ using UnityEngine.AI;
 namespace Rugem.RoadTools
 {
     /// <summary>
-    /// 길찾기 핵심 로직 — POI 검색, 목적지 설정, NavMesh 경로 계산, 도착 감지
+    /// 길찾기 핵심 로직 — 목적지 설정, NavMesh 경로 계산, 도착 감지
     /// </summary>
     public class NavigationService : MonoBehaviour
     {
         [Header("의존성")]
-        [SerializeField] private GPSLocationService _gpsService;
-        [SerializeField] private FirstPersonGPSController _playerController;
-        [Tooltip("카메라 수직 하방 지형 지점을 추적하는 앵커. 없으면 GPS 스무딩 위치 폴백.")]
-        [SerializeField] private CameraNavAnchor _navAnchor;
+        [SerializeField] private PositionProvider _positionProvider;
 
         [Header("경로 설정")]
         [Tooltip("도착 판정 반경 (미터 — 수평 거리 기준)")]
@@ -34,16 +31,10 @@ namespace Rugem.RoadTools
         [SerializeField] private int _maxRoadGridCells = 30000;
 
         [Header("카카오 도로 경로 (선택)")]
-        [Tooltip("씬에 직접 저장하지 마세요. Assets/Resources/kakao_api_key.txt 에서 자동 로드됩니다.\n" +
-                 "(해당 파일을 .gitignore에 추가하여 커밋에서 제외하세요)")]
-        // API 키는 씬 파일에 직렬화하지 않음 — Resources/kakao_api_key.txt 에서 런타임 로드
-        private string _kakaoRestApiKey = "";
-        [Tooltip("직접 키를 입력하지 않고 씬에 있는 KakaoDirectionsService 컴포넌트를 참조할 경우 여기에 연결합니다. (선택)")]
+        [Tooltip("비워 두면 Resources/kakao_api_key.txt 에서 자동 로드됩니다.")]
+        [SerializeField] private string _kakaoRestApiKey = "";
+        [Tooltip("씬에 있는 KakaoDirectionsService 컴포넌트를 직접 연결합니다. (선택)")]
         [SerializeField] private KakaoDirectionsService _directionsService;
-
-        [Header("POI 목록")]
-        [Tooltip("Inspector에서 직접 편집하거나 InitializeSamplePOIs()를 통해 기본값 로드")]
-        [SerializeField] private List<POIData> _poiList = new();
 
         // ── 이벤트 ─────────────────────────────────────────────────────────────
         public event System.Action<POIData, Vector3[]> OnRouteCalculated;
@@ -73,58 +64,29 @@ namespace Rugem.RoadTools
 
         // ── 생명주기 ────────────────────────────────────────────────────────────
 
-        private void Awake()
-        {
-            if (_poiList.Count == 0)
-                InitializeSamplePOIs();
-
-            ResolveDependencies();
-        }
+        private void Awake() => ResolveDependencies();
 
         private void ResolveDependencies()
         {
-            if (_gpsService == null)
-                _gpsService = FindAnyObjectByType<GPSLocationService>();
-            if (_playerController == null)
-                _playerController = FindAnyObjectByType<FirstPersonGPSController>();
-            // API 키를 Resources에서 로드 (씬 파일 직렬화 방지)
-            if (string.IsNullOrWhiteSpace(_kakaoRestApiKey))
-            {
-                var cfg = Resources.Load<TextAsset>("kakao_api_key");
-                if (cfg != null) _kakaoRestApiKey = cfg.text.Trim();
-            }
+            if (_positionProvider == null)
+                _positionProvider = FindAnyObjectByType<PositionProvider>();
 
-            // 키 직접 입력 우선 — 컴포넌트 참조 없이 자동 구성
-            if (!string.IsNullOrWhiteSpace(_kakaoRestApiKey))
-            {
-                if (_directionsService == null)
-                    _directionsService = gameObject.GetComponent<KakaoDirectionsService>()
-                                      ?? gameObject.AddComponent<KakaoDirectionsService>();
-                _directionsService.Initialize(_kakaoRestApiKey);
-            }
-            else if (_directionsService == null)
-            {
-                _directionsService = FindAnyObjectByType<KakaoDirectionsService>();
-            }
-            if (_navAnchor == null)
-                _navAnchor = FindAnyObjectByType<CameraNavAnchor>();
+            System.Func<double, double, Vector3> converter = _positionProvider != null
+                ? (lat, lon) => _positionProvider.ConvertToUnityPosition(lat, lon)
+                : null;
+
+            if (_directionsService == null)
+                _directionsService = FindAnyObjectByType<KakaoDirectionsService>()
+                                  ?? gameObject.GetComponent<KakaoDirectionsService>()
+                                  ?? gameObject.AddComponent<KakaoDirectionsService>();
+
+            _directionsService.Initialize(_kakaoRestApiKey, converter);
 
             if (_roadLayerMask == 0)
             {
                 int roadLayer = LayerMask.NameToLayer("Road");
                 if (roadLayer >= 0)
                     _roadLayerMask = 1 << roadLayer;
-            }
-
-            // "Road" 레이어가 없어도 RoadAssetPlacer에서 도로 레이어 자동 상속
-            if (_roadLayerMask == 0)
-            {
-                var placer = FindAnyObjectByType<RoadAssetPlacer>();
-                if (placer != null && placer.roadLayerMask != 0)
-                {
-                    _roadLayerMask = placer.roadLayerMask;
-                    Debug.Log($"[NavService] RoadAssetPlacer에서 도로 레이어 자동 감지: {_roadLayerMask.value}");
-                }
             }
         }
 
@@ -148,18 +110,6 @@ namespace Rugem.RoadTools
 
         // ── 공개 API ────────────────────────────────────────────────────────────
 
-        /// <summary>query를 이름·카테고리에 포함 검색. 빈 문자열이면 전체 반환.</summary>
-        public List<POIData> SearchPOIs(string query)
-        {
-            if (string.IsNullOrWhiteSpace(query))
-                return new List<POIData>(_poiList);
-
-            string lower = query.Trim().ToLower();
-            return _poiList.FindAll(p =>
-                p.name.ToLower().Contains(lower) ||
-                p.category.ToLower().Contains(lower));
-        }
-
         /// <summary>목적지를 설정하고 경로 계산을 시작합니다.</summary>
         public void SetDestination(POIData poi)
         {
@@ -172,9 +122,9 @@ namespace Rugem.RoadTools
             }
 
             ResolveDependencies();
-            if (_gpsService == null)
+            if (_positionProvider == null || !_positionProvider.IsReady)
             {
-                Debug.LogError("[NavService] GPSLocationService가 연결되지 않았습니다.");
+                Debug.LogError("[NavService] PositionProvider가 연결되지 않았습니다.");
                 return;
             }
 
@@ -183,23 +133,11 @@ namespace Rugem.RoadTools
             DistanceToDestination = -1f;
             _refreshTimer         = 0f;
 
-            _destinationWorldPos = _gpsService.ConvertToUnityPosition(poi.latitude, poi.longitude);
+            _destinationWorldPos = _positionProvider.ConvertToUnityPosition(poi.latitude, poi.longitude);
             DestinationWorldPos  = _destinationWorldPos;
             CalculateRoute();
             OnDestinationSet?.Invoke(poi);
             Debug.Log($"[NavService] 목적지 설정: {poi.name} ({poi.latitude:F6}, {poi.longitude:F6})");
-        }
-
-        /// <summary>플레이어 카메라를 현재 목적지 위치로 즉시 이동합니다.</summary>
-        public void MoveToDestination()
-        {
-            if (CurrentDestination == null) return;
-
-            ResolveDependencies();
-            if (_playerController != null)
-                _playerController.TeleportTo(CurrentDestination.latitude, CurrentDestination.longitude);
-            else
-                Debug.LogWarning("[NavService] FirstPersonGPSController가 연결되지 않았습니다.");
         }
 
         /// <summary>경로 안내를 종료하고 상태를 초기화합니다.</summary>
@@ -220,13 +158,10 @@ namespace Rugem.RoadTools
 
         private void UpdateDistance()
         {
-            ResolveDependencies();
-            if (_gpsService == null) return;
+            if (_positionProvider == null) return;
 
-            Vector3 playerXZ = new Vector3(
-                _gpsService.SmoothedUnityPosition.x, 0f,
-                _gpsService.SmoothedUnityPosition.z);
-            Vector3 destXZ = new Vector3(_destinationWorldPos.x, 0f, _destinationWorldPos.z);
+            Vector3 playerXZ = new Vector3(_positionProvider.PlayerPosition.x, 0f, _positionProvider.PlayerPosition.z);
+            Vector3 destXZ   = new Vector3(_destinationWorldPos.x, 0f, _destinationWorldPos.z);
             DistanceToDestination = Vector3.Distance(playerXZ, destXZ);
         }
 
@@ -243,7 +178,7 @@ namespace Rugem.RoadTools
         private void CalculateRoute()
         {
             ResolveDependencies();
-            if (_gpsService == null) return;
+            if (_positionProvider == null) return;
 
             // 우선순위: 카카오 Directions API → 도로 메쉬 A* → NavMesh → 직선 폴백
             int requestId = _routeRequestId;
@@ -252,8 +187,8 @@ namespace Rugem.RoadTools
             if (_directionsService != null)
             {
                 _directionsService.RequestRoute(
-                    _gpsService.CurrentLatitude,  _gpsService.CurrentLongitude,
-                    destinationSnapshot.latitude,  destinationSnapshot.longitude,
+                    _positionProvider.CurrentLatitude,  _positionProvider.CurrentLongitude,
+                    destinationSnapshot.latitude,        destinationSnapshot.longitude,
                     (waypoints, error) =>
                     {
                         if (requestId != _routeRequestId || destinationSnapshot != CurrentDestination)
@@ -262,12 +197,8 @@ namespace Rugem.RoadTools
                         if (error == null && waypoints != null && waypoints.Length >= 2)
                         {
                             // 현재 위치 → 카카오 경로 시작점을 직선으로 보간
-                            Vector3 playerPos = (_navAnchor != null && _navAnchor.NavTransform != null)
-                                ? _navAnchor.NavTransform.position
-                                : _gpsService.SmoothedUnityPosition;
-
                             var fullRoute = new Vector3[waypoints.Length + 1];
-                            fullRoute[0] = playerPos;
+                            fullRoute[0] = _positionProvider.NavPosition;
                             System.Array.Copy(waypoints, 0, fullRoute, 1, waypoints.Length);
                             CurrentRoute = fullRoute;
                             OnRouteCalculated?.Invoke(destinationSnapshot, CurrentRoute);
@@ -287,12 +218,9 @@ namespace Rugem.RoadTools
 
         private void CalculateNavMeshRoute()
         {
-            if (_gpsService == null) return;
+            if (_positionProvider == null) return;
 
-            // mainCameraNav(지형 표면 정사영)를 시작점으로 우선 사용, 없으면 GPS 스무딩 위치 폴백
-            Vector3 startPos = (_navAnchor != null && _navAnchor.NavTransform != null)
-                ? _navAnchor.NavTransform.position
-                : _gpsService.SmoothedUnityPosition;
+            Vector3 startPos = _positionProvider.NavPosition;
 
             if (TryCalculateRoadMeshRoute(startPos, _destinationWorldPos, out Vector3[] roadRoute))
             {
@@ -651,29 +579,5 @@ namespace Rugem.RoadTools
             return simplified;
         }
 
-        // ── 샘플 POI 초기화 ─────────────────────────────────────────────────────
-
-        private void InitializeSamplePOIs()
-        {
-            // CesiumGeoreference 원점(37.5662952, 126.9779692) 기준 주변 샘플 데이터
-            // 실제 서비스에서는 Inspector 또는 CSV로 교체하세요.
-            _poiList = new List<POIData>
-            {
-                new("버스정류장 A", "교통",     37.5665,  126.9782),
-                new("버스정류장 B", "교통",     37.5658,  126.9786),
-                new("중앙공원 입구", "공원",    37.5671,  126.9774),
-                new("편의점 GS25",   "상업",    37.5663,  126.9785),
-                new("스타벅스 카페", "상업",    37.5660,  126.9777),
-                new("약국",          "의료",    37.5657,  126.9783),
-                new("내과 의원",     "의료",    37.5668,  126.9780),
-                new("구립 도서관",   "문화",    37.5673,  126.9778),
-                new("초등학교",      "교육",    37.5654,  126.9784),
-                new("우체국",        "공공기관",37.5669,  126.9775),
-                new("공중화장실",    "편의시설",37.5661,  126.9788),
-                new("경찰서",        "공공기관",37.5656,  126.9773),
-                new("자전거 대여소", "교통",    37.5666,  126.9781),
-                new("ATM",           "편의시설",37.5662,  126.9776),
-            };
-        }
     }
 }
