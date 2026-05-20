@@ -48,11 +48,11 @@ public class MapManager : MonoBehaviour
         controller.SwitchLayer(VWorldLayerType.Base);
     }
 
-    public void ShowTerrainOnly()
+    public void ShowHybridMap()
     {
         if (!TryGetOverlayController(out VWorldOverlayController controller)) return;
 
-        controller.SetVisible(false);
+        controller.SwitchLayer(VWorldLayerType.Hybrid);
     }
 
     private bool TryGetOverlayController(out VWorldOverlayController controller)
@@ -81,7 +81,7 @@ public class MapManager : MonoBehaviour
                     button.onClick.AddListener(ShowBaseMap);
                     break;
                 case "Btn_Terrain":
-                    button.onClick.AddListener(ShowTerrainOnly);
+                    button.onClick.AddListener(ShowHybridMap);
                     break;
             }
         }

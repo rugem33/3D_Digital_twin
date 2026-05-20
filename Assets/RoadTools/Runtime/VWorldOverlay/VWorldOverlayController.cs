@@ -49,6 +49,7 @@ namespace Rugem.RoadTools
         [SerializeField] private MonoBehaviour _heightSamplerToDisable;
 
         private CesiumUrlTemplateRasterOverlay _overlay;
+        private Coroutine _switchCoroutine;
 
         public VWorldLayerType CurrentLayer   => _layerType;
         public bool            IsOverlayActive => _overlay != null && _overlay.enabled;
@@ -109,24 +110,7 @@ namespace Rugem.RoadTools
         }
 
         /// <summary>지정 레이어를 적용합니다.</summary>
-        public void ApplyOverlay(VWorldLayerType layer)
-        {
-#if UNITY_EDITOR
-            if (!Application.isPlaying)
-            {
-                ApplyOverlayImmediate(layer, true);
-                return;
-            }
-#endif
-
-            if (_overlay == null) return;
-            _layerType = layer;
-
-            string key = VWorldApiKeyProvider.Resolve(_apiKey);
-            if (string.IsNullOrEmpty(key)) return;
-
-            StartCoroutine(SwitchRoutine(key, layer));
-        }
+        public void ApplyOverlay(VWorldLayerType layer) => SwitchLayer(layer);
 
         /// <summary>레이어 전환.</summary>
         public void SwitchLayer(VWorldLayerType layer)
@@ -140,27 +124,33 @@ namespace Rugem.RoadTools
 #endif
 
             if (_overlay == null) return;
+            if (_layerType == layer) return;
             _layerType = layer;
 
             string key = VWorldApiKeyProvider.Resolve(_apiKey);
             if (string.IsNullOrEmpty(key)) return;
 
-            StartCoroutine(SwitchRoutine(key, layer));
+            if (_switchCoroutine != null)
+                StopCoroutine(_switchCoroutine);
+
+            _switchCoroutine = StartCoroutine(SwitchRoutine(key, layer));
         }
 
         private IEnumerator SwitchRoutine(string key, VWorldLayerType layer)
         {
-            bool samplerWasEnabled = false;
             if (_heightSamplerToDisable != null)
-            {
-                samplerWasEnabled = _heightSamplerToDisable.enabled;
                 _heightSamplerToDisable.enabled = false;
-            }
 
+            // 이전 오버레이 제거 후 새 컴포넌트 생성 → 타일 캐시 완전 해제
             _overlay.enabled = false;
+            Destroy(_overlay);
             yield return null;
 
-            _overlay.templateUrl = BuildUrl(key, layer);
+            _overlay = _targetTileset.gameObject.AddComponent<CesiumUrlTemplateRasterOverlay>();
+            _overlay.enabled      = false;
+            _overlay.templateUrl  = BuildUrl(key, layer);
+            _overlay.minimumLevel = Mathf.Max(_minimumLevel, 6);
+            _overlay.maximumLevel = Mathf.Min(_maximumLevel, 19);
             yield return null;
 
             _overlay.enabled = true;
@@ -168,8 +158,9 @@ namespace Rugem.RoadTools
             yield return new WaitForSeconds(1.5f);
 
             if (_heightSamplerToDisable != null)
-                _heightSamplerToDisable.enabled = samplerWasEnabled;
+                _heightSamplerToDisable.enabled = true;
 
+            _switchCoroutine = null;
             Debug.Log($"[VWorldOverlay] {layer} 전환 완료");
         }
 

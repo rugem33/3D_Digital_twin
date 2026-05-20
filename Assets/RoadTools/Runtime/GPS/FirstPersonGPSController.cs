@@ -614,11 +614,6 @@ namespace Rugem.RoadTools
             // 최초이거나 2m 이상 이동했을 때만 지면 재감지 (GPS 고도 노이즈로 인한 상하 떨림 방지)
             bool shouldCheck = _cachedGroundY == float.MinValue || movedDist > GroundCheckMoveThreshold;
 
-#if UNITY_EDITOR
-            // 에디터: 타일 로드 전 샘플링 실패를 피하기 위해 rawUnityPosition.y(_editorSimAltitude 기반)를 지면값으로 직접 사용
-            if (shouldCheck)
-                _cachedGroundY = rawUnityPosition.y;
-#else
             if (shouldCheck && !_samplingHeight)
             {
                 // Cesium 지형 높이 샘플링 시작 (비동기) — 실패 시 Raycast 폴백
@@ -627,7 +622,6 @@ namespace Rugem.RoadTools
                     _gpsService.CurrentLongitude,
                     rawUnityPosition);
             }
-#endif
 
             // Y는 GPS 고도 대신 캐시된 지면값만 사용 → 흔들림 없음
             float targetY = _cachedGroundY != float.MinValue
