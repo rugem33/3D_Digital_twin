@@ -93,23 +93,6 @@ namespace Rugem.RoadTools
         public string ResolvedTerrainUrl => ResolveTerrainUrl(_mode);
 
 #if UNITY_EDITOR
-        [InitializeOnLoadMethod]
-        private static void RegisterPlayModeReset()
-        {
-            EditorApplication.playModeStateChanged += state =>
-            {
-                if (state != PlayModeStateChange.ExitingEditMode) return;
-                // 도메인 리로드 전에 Cesium 네이티브 타일 로딩을 중단시켜 힙 손상 방지
-                foreach (var sw in FindObjectsByType<TerrainSourceSwitcher>(FindObjectsSortMode.None))
-                {
-                    if (!sw._applyOnStart)
-                        sw.PrepareTilesetForManualApply();
-                }
-            };
-        }
-#endif
-
-#if UNITY_EDITOR
         private bool _editorUploadInProgress;
 #endif
 
@@ -121,8 +104,7 @@ namespace Rugem.RoadTools
                 return;
             }
 
-            PrepareTilesetForManualApply();
-            Debug.Log("[TerrainSwitcher] Startup terrain loading is disabled. Use the inspector buttons to apply a terrain source.");
+            Debug.Log("[TerrainSwitcher] Automatic startup apply is disabled. Existing tileset source is preserved.");
         }
 
         private void OnValidate()
@@ -567,19 +549,6 @@ namespace Rugem.RoadTools
                 _tileset.maximumCachedBytes = cacheBytes;
             if (_tileset.loadingDescendantLimit != descendantLimit)
                 _tileset.loadingDescendantLimit = descendantLimit;
-        }
-
-        private void PrepareTilesetForManualApply()
-        {
-            if (_tileset == null)
-                return;
-
-            _tileset.suspendUpdate = true;
-#if UNITY_EDITOR
-            _tileset.updateInEditor = false;
-#endif
-            if (_tileset.tilesetSource != CesiumDataSource.FromEllipsoid)
-                _tileset.tilesetSource = CesiumDataSource.FromEllipsoid;
         }
 
         private string ResolveTerrainUrl(TerrainSourceMode mode)

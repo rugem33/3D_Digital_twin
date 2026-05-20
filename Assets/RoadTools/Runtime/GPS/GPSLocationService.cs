@@ -27,6 +27,10 @@ namespace Rugem.RoadTools
         [Tooltip("위치 보간 속도 (값이 높을수록 GPS를 빠르게 추적, 낮을수록 부드러움)")]
         [SerializeField] private float _lerpSpeed = 5f;
 
+        [Header("에디터 GPS 시뮬레이션")]
+        [Tooltip("에디터/모바일 에뮬레이터 전용 시뮬레이션 고도 (미터, WGS84 기준). 실기기에서는 무시됩니다.")]
+        [SerializeField] private float _editorSimAltitude = 300f;
+
         // ── 공개 상태 ──────────────────────────────────────────────────────────
 
         /// <summary>Lerp 보간이 적용된 현재 Unity 월드 좌표</summary>
@@ -219,7 +223,7 @@ namespace Rugem.RoadTools
             Debug.Log($"[GPSService] 에디터 환경 - GPS 시뮬레이션 위치: ({simLat:F6}, {simLon:F6})");
             IsRunning = true;
 
-            ProcessLocationData(simLat, simLon, 0.0);
+            ProcessLocationData(simLat, simLon, _editorSimAltitude);
             yield break;
 #endif
         }
