@@ -9,7 +9,14 @@ from flask import Flask, Response, jsonify, request, send_from_directory, stream
 from app import config
 from app.services.archive import reset_dir, zip_directory
 from app.services.jobs import read_job_logs, read_job_status, start_conversion_job
-from app.services.shapefile import find_shapefile, find_terrain_file, read_attributes, save_uploads
+from app.services.shapefile import (
+    apply_constant_height_column,
+    find_shapefile,
+    find_terrain_file,
+    read_attributes,
+    save_uploads,
+    try_parse_float,
+)
 from app.services.tiler import TilerOptions, run_mago_tiler
 from app.services.terrain import (
     read_terrain_log,
@@ -299,10 +306,20 @@ def prepare_conversion_request(job_id: str, job_upload_dir: Path, job_output_dir
     if output_type not in ALLOWED_OUTPUT_TYPES:
         raise ValueError(f"Invalid outputType: {output_type}. Allowed values: {sorted(ALLOWED_OUTPUT_TYPES)}")
 
+    height_column = form_value("heightColumn", "height_column", default=config.DEFAULT_HEIGHT_COLUMN)
+    constant_height = try_parse_float(height_column)
+    if constant_height is not None:
+        height_column = apply_constant_height_column(shp_path, constant_height)
+
+    skirt_height = normalize_float_string(
+        form_value("scaleHeight", "skirt_height", default=config.DEFAULT_SKIRT_HEIGHT),
+        field_name="scaleHeight",
+    )
+
     options = TilerOptions(
         coordinate_code=form_value("coordinateSystem", "coordinate_code", default=config.DEFAULT_COORDINATE_CODE),
-        height_column=form_value("heightColumn", "height_column", default=config.DEFAULT_HEIGHT_COLUMN),
-        skirt_height=form_value("scaleHeight", "skirt_height", default=config.DEFAULT_SKIRT_HEIGHT),
+        height_column=height_column,
+        skirt_height=skirt_height,
         input_type=config.DEFAULT_INPUT_TYPE,
         output_type=output_type,
         curvature_correction=form_bool("curvatureCorrection", "curvature_correction", default=True),
@@ -316,6 +333,7 @@ def prepare_conversion_request(job_id: str, job_upload_dir: Path, job_output_dir
                 "shapefile": str(shp_path.relative_to(job_upload_dir)),
                 "terrain_tif": str(terrain_path.relative_to(job_upload_dir)) if terrain_path else None,
                 "attributes": attributes,
+                "constant_height": constant_height,
                 "tiler_options": options.__dict__,
             },
             ensure_ascii=False,
@@ -348,6 +366,14 @@ def form_value(*names: str, default: str) -> str:
 def form_bool(*names: str, default: bool) -> bool:
     value = form_value(*names, default=str(default))
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def normalize_float_string(value: str, field_name: str) -> str:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be a float value: {value}") from exc
+    return f"{parsed:g}"
 
 
 def public_url(path: str | Path) -> str:

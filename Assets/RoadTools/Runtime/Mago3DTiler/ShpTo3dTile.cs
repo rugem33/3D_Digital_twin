@@ -80,7 +80,7 @@ namespace Rugem.RoadTools
         [SerializeField] private bool _curvatureCorrection = true;
         [Tooltip("좌표계 EPSG 코드 (예: 5186 = GRS80 중부원점)")]
         [SerializeField] private int _coordinateSystem = 5186;
-        [Tooltip("높이값으로 사용할 DBF 속성 컬럼명")]
+        [Tooltip("높이값으로 사용할 DBF 속성 컬럼명 또는 모든 객체에 적용할 float 높이값")]
         [SerializeField] private string _heightColumn = "height";
         [Tooltip("높이 스케일 배율")]
         [SerializeField] private float _scaleHeight = 10.0f;

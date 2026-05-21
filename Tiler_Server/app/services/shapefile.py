@@ -3,6 +3,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+import shapefile as pyshp
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
@@ -83,3 +84,57 @@ def read_attributes(form_value: str | None, json_file: FileStorage | None, uploa
         return json.loads(form_value)
 
     return {}
+
+
+def try_parse_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def apply_constant_height_column(shp_path: Path, height: float, field_name: str = "RT_HEIGHT") -> str:
+    """Add or overwrite a numeric DBF height column for mago's -hc option."""
+    field_name = field_name[:10]
+    base = shp_path.with_suffix("")
+    tmp_base = shp_path.with_name(f"{shp_path.stem}__height_tmp")
+
+    reader = pyshp.Reader(str(base))
+    fields = [list(field) for field in reader.fields[1:]]
+    field_names = [str(field[0]).upper() for field in fields]
+    target_upper = field_name.upper()
+
+    try:
+        target_index = field_names.index(target_upper)
+    except ValueError:
+        target_index = -1
+        fields.append([field_name, "F", 18, 6])
+
+    writer = pyshp.Writer(str(tmp_base), shapeType=reader.shapeType)
+    try:
+        for field in fields:
+            writer.field(*field)
+
+        for shape_record in reader.iterShapeRecords():
+            record = list(shape_record.record)
+            if target_index >= 0:
+                record[target_index] = height
+            else:
+                record.append(height)
+            writer.shape(shape_record.shape)
+            writer.record(*record)
+    finally:
+        writer.close()
+        reader.close()
+
+    for suffix in (".shp", ".shx", ".dbf"):
+        tmp = tmp_base.with_suffix(suffix)
+        if tmp.exists():
+            tmp.replace(base.with_suffix(suffix))
+
+    return field_name
