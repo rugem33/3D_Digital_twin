@@ -104,7 +104,27 @@ def apply_constant_height_column(shp_path: Path, height: float, field_name: str 
     base = shp_path.with_suffix("")
     tmp_base = shp_path.with_name(f"{shp_path.stem}__height_tmp")
 
-    reader = pyshp.Reader(str(base))
+    last_error: UnicodeDecodeError | None = None
+    for encoding in _candidate_dbf_encodings(shp_path):
+        try:
+            _write_constant_height_column(base, tmp_base, height, field_name, encoding)
+            return field_name
+        except UnicodeDecodeError as exc:
+            last_error = exc
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"Failed to update DBF height column: {shp_path}")
+
+
+def _write_constant_height_column(
+    base: Path,
+    tmp_base: Path,
+    height: float,
+    field_name: str,
+    encoding: str,
+) -> None:
+    reader = pyshp.Reader(str(base), encoding=encoding)
     fields = [list(field) for field in reader.fields[1:]]
     field_names = [str(field[0]).upper() for field in fields]
     target_upper = field_name.upper()
@@ -115,7 +135,7 @@ def apply_constant_height_column(shp_path: Path, height: float, field_name: str 
         target_index = -1
         fields.append([field_name, "F", 18, 6])
 
-    writer = pyshp.Writer(str(tmp_base), shapeType=reader.shapeType)
+    writer = pyshp.Writer(str(tmp_base), shapeType=reader.shapeType, encoding=encoding)
     try:
         for field in fields:
             writer.field(*field)
@@ -137,4 +157,27 @@ def apply_constant_height_column(shp_path: Path, height: float, field_name: str 
         if tmp.exists():
             tmp.replace(base.with_suffix(suffix))
 
-    return field_name
+
+def _candidate_dbf_encodings(shp_path: Path) -> list[str]:
+    cpg_path = shp_path.with_suffix(".cpg")
+    candidates: list[str] = []
+    if cpg_path.exists():
+        cpg = cpg_path.read_text(encoding="ascii", errors="ignore").strip()
+        if cpg:
+            candidates.append(_normalize_cpg_encoding(cpg))
+
+    for encoding in ("utf-8", "cp949", "euc-kr", "latin1"):
+        if encoding not in candidates:
+            candidates.append(encoding)
+    return candidates
+
+
+def _normalize_cpg_encoding(value: str) -> str:
+    upper = value.strip().upper()
+    if upper in {"949", "CP949", "MS949", "WINDOWS-949"}:
+        return "cp949"
+    if upper in {"51949", "EUC-KR", "EUCKR"}:
+        return "euc-kr"
+    if upper in {"65001", "UTF8", "UTF-8"}:
+        return "utf-8"
+    return value.strip()
