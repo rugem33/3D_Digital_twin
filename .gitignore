@@ -2716,3 +2716,7 @@ iosBuild/usymtoolarm64
 /Assets/_Recovery
 /Assets/Resources
 /Tools/tiles
+
+# Generated thesis work and extracted reference materials
+/research/_work/
+/research/개발이력_원자료_202604-06/
