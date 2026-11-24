@@ -13,6 +13,7 @@ DEM (.tif / .img) → quantized-mesh 지형 타일 변환 및 서빙 서비스
 import json
 import math
 import os
+import re
 import struct
 import subprocess
 import tempfile
@@ -32,6 +33,8 @@ SELF_NAME    = os.getenv("SELF_CONTAINER_NAME", "tiler-server")
 LOW_ZOOM_FIX_THRESHOLD = 4
 # z=7 도 4정점 평탄 타일이므로 교체 대상
 FLAT_ZOOM_LEVELS = {7}
+TERRAIN_JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+TERRAIN_INPUT_EXTENSIONS = {".tif", ".tiff", ".img", ".hgt"}
 
 
 # ────────────────────────────────────────────────────────────
@@ -61,6 +64,67 @@ def read_terrain_status(job_id: str) -> dict[str, Any] | None:
         return json.loads(_status_path(job_id).read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
+
+
+def resolve_terrain_job_assets(job_id: str) -> tuple[Path, Path]:
+    """Return the source DEM and local layer.json for a completed terrain job."""
+    normalized = job_id.strip().lower()
+    if not TERRAIN_JOB_ID_RE.fullmatch(normalized):
+        raise ValueError("terrainJobId must be a 32-character hexadecimal job id")
+
+    status = read_terrain_status(normalized)
+    if status is None:
+        raise ValueError(f"Terrain job not found: {normalized}")
+    if status.get("status") != "completed":
+        raise ValueError(
+            f"Terrain job is not completed: {normalized} "
+            f"(status={status.get('status', 'unknown')})"
+        )
+
+    input_dir = config.TERRAIN_DIR / normalized / "input"
+    dem_files = sorted(
+        path for path in input_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in TERRAIN_INPUT_EXTENSIONS
+    ) if input_dir.is_dir() else []
+    if len(dem_files) != 1:
+        raise ValueError(
+            f"Terrain job must contain exactly one source DEM: {normalized} "
+            f"(found={len(dem_files)})"
+        )
+
+    layer_path = _tiles_dir(normalized) / "layer.json"
+    if not layer_path.is_file():
+        raise ValueError(f"Terrain job layer.json is missing: {normalized}")
+    _normalize_local_layer_json(layer_path)
+    return dem_files[0], layer_path
+
+
+def _normalize_local_layer_json(layer_path: Path) -> None:
+    """Keep the on-disk descriptor usable by Mago; HTTP serving adds absolute URLs."""
+    try:
+        data = json.loads(layer_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ValueError(f"Invalid terrain layer.json: {layer_path}") from exc
+    if data.get("format") != "quantized-mesh-1.0":
+        raise ValueError(f"Unsupported terrain format in {layer_path}")
+
+    local_tiles = ["{z}/{x}/{y}.terrain"]
+    if data.get("tiles") == local_tiles:
+        return
+    data["tiles"] = local_tiles
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=layer_path.parent,
+            prefix=".layer-", suffix=".tmp", delete=False,
+        ) as temporary:
+            json.dump(data, temporary, indent=2, ensure_ascii=False)
+            temporary_path = Path(temporary.name)
+        temporary_path.replace(layer_path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def read_terrain_log(job_id: str, max_chars: int = 32000) -> str | None:
@@ -327,25 +391,36 @@ def _step_ctb_tile(wgs84_tif: Path, tiles_dir: Path, max_zoom: int, log) -> None
     """
     _ensure_ctb_image(log)
 
+    command = _build_ctb_command(wgs84_tif, tiles_dir, max_zoom)
+    log.write(
+        f"  resampling={config.TERRAIN_RESAMPLING_METHOD}, "
+        f"mesh_qfactor={config.TERRAIN_MESH_QFACTOR}\n"
+    )
     r = subprocess.run(
-        [
-            "docker", "run", "--rm",
-            f"--volumes-from={SELF_NAME}",
-            CTB_IMAGE,
-            "ctb-tile",
-            "-f", "Mesh",
-            "-C",
-            "-s", str(max_zoom),
-            "-e", "0",
-            "-o", str(tiles_dir),
-            str(wgs84_tif),
-        ],
+        command,
         capture_output=True, text=True, timeout=config.CONVERT_TIMEOUT_SECONDS,
     )
     log.write(r.stdout)
     log.write(r.stderr)
     if r.returncode != 0:
         raise RuntimeError(f"ctb-tile 실패 (코드 {r.returncode}): {r.stderr[:400]}")
+
+
+def _build_ctb_command(wgs84_tif: Path, tiles_dir: Path, max_zoom: int) -> list[str]:
+    return [
+        "docker", "run", "--rm",
+        f"--volumes-from={SELF_NAME}",
+        CTB_IMAGE,
+        "ctb-tile",
+        "-f", "Mesh",
+        "-C",
+        "-r", config.TERRAIN_RESAMPLING_METHOD,
+        "-g", config.TERRAIN_MESH_QFACTOR,
+        "-s", str(max_zoom),
+        "-e", "0",
+        "-o", str(tiles_dir),
+        str(wgs84_tif),
+    ]
 
 
 def _ensure_ctb_image(log) -> None:
@@ -394,7 +469,7 @@ def _write_layer_json(job_id: str, tiles_dir: Path, max_zoom: int, bounds: list[
         "format": "quantized-mesh-1.0",
         "version": "1.0.0",
         "scheme": "tms",
-        "tiles": [f"{config.PUBLIC_BASE_URL}/terrain/{job_id}/{{z}}/{{x}}/{{y}}.terrain"],
+        "tiles": ["{z}/{x}/{y}.terrain"],
         "bounds": bounds,
         "minzoom": 0,
         "maxzoom": max_zoom,

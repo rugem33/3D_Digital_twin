@@ -8,10 +8,12 @@ services:
       PUBLIC_BASE_URL: ""
       DEFAULT_COORDINATE_CODE: "5186"
       DEFAULT_HEIGHT_COLUMN: "height"
-      DEFAULT_SKIRT_HEIGHT: "10.0"
+      DEFAULT_SKIRT_HEIGHT: "0.0"
       CONVERT_TIMEOUT_SECONDS: "1800"
       MAX_UPLOAD_MB: "2048"
       DEFAULT_TERRAIN_MAX_ZOOM: "12"
+      TERRAIN_RESAMPLING_METHOD: "bilinear"
+      TERRAIN_MESH_QFACTOR: "0.01"
       # ctb-tile 실행 시 --volumes-from 으로 참조할 자기 자신의 컨테이너 이름
       SELF_CONTAINER_NAME: "tiler-server"
       # JVM 힙 설정 — 서버 메모리에 맞게 조정 (가용 메모리의 70% 이하 권장)

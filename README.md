@@ -146,6 +146,70 @@ NavigationService.Update()
 
 ---
 
+## 서버 인프라
+
+Unity 앱에 공급할 공간 데이터를 처리하는 두 개의 독립 Docker 컨테이너로 구성됩니다.
+
+### 전체 데이터 파이프라인
+
+```
+SHP / GeoJSON                 DEM (GeoTIFF)
+      │                             │
+      ▼                             ▼
+Tiler_Server (8000)        Terrain_Server (5001)
+  mago-3d-tiler JAR           ctb-tile (컴파일)
+  SHP → b3dm / i3dm           TIF → quantized-mesh
+      │                             │
+      ▼                             ▼
+ 3D Tiles (tileset.json)      layer.json + *.terrain
+      │                             │
+      └──────────────┬──────────────┘
+                     ▼
+           Cesium for Unity (Unity Client)
+```
+
+### Tiler_Server (포트 8000)
+
+`Tiler_Server/` 디렉토리. SHP/GeoJSON → 3D Tiles 변환 전담.
+
+| 엔드포인트 | 메서드 | 설명 |
+|-----------|--------|------|
+| `GET /health` | — | 헬스체크 |
+| `POST /api/convert` | async | SHP → 3D Tiles 변환 시작 |
+| `GET /api/jobs/<id>/status` | — | 변환 작업 상태 |
+| `GET /api/jobs/<id>/logs` | — | 변환 작업 로그 |
+| `GET /outputs/<id>/<file>` | — | 변환 결과 파일 다운로드 |
+
+주요 환경 변수: `PUBLIC_BASE_URL`, `DEFAULT_COORDINATE_CODE` (기본 5186), `JAVA_XMS/XMX` (기본 8g), `CONVERT_TIMEOUT_SECONDS` (기본 1800)
+
+### Terrain_Server (포트 5001)
+
+`Terrain_Server/` 디렉토리. DEM(TIF) → quantized-mesh 지형 타일 변환 전담.
+
+```
+POST /api/terrain/convert
+  → process_dem.py
+      1단계: gdalwarp WGS84 변환 → /app/_work/wgs84.tif
+      2단계: ctb-tile 직접 실행 → /app/tiles/{z}/{x}/{y}.terrain
+      3단계: layer.json 생성
+      4단계: 타일 고도 데이터 검증
+  → GET /api/terrain/jobs/<id>/status 로 폴링
+  → 완료 시 layerUrl = http://<host>:5001/layer.json
+```
+
+| 엔드포인트 | 메서드 | 설명 |
+|-----------|--------|------|
+| `GET /health` | — | 헬스체크 |
+| `GET /layer.json` | — | Cesium 지형 메타데이터 |
+| `GET /<z>/<x>/<y>.terrain` | — | quantized-mesh 타일 (없으면 평탄 폴백) |
+| `GET /status` | — | 타일 현황 (개수, 줌 범위) |
+| `POST /api/terrain/convert` | async | TIF 업로드 → 변환 시작 |
+| `GET /api/terrain/jobs/<id>/status` | — | 변환 작업 상태 |
+
+Unity 연결: `TerrainSourceSwitcher > Mode = CustomUrl` → `http://<host>:5001/layer.json`
+
+---
+
 ## 코드 구조
 
 ```
@@ -195,6 +259,8 @@ Assets/
 | **지오코딩** | Kakao Local API (POI 검색, 역지오코딩) |
 | **빌드 타겟** | Android, iOS |
 | **데이터 소스** | Cesium Ion, 공공 CSV/GeoJSON, Kakao 지도 API |
+| **Tiler_Server** | Flask · gunicorn · mago-3d-tiler 1.16.3 JAR (OpenJDK 21) · Docker (포트 8000) |
+| **Terrain_Server** | Flask · GDAL · ctb-tile (소스 컴파일) · Python 3.11 · Docker (포트 5001) |
 
 ---
 
@@ -207,6 +273,33 @@ Assets/
 | 카메라 Jittering 발생률 | GPS ↔ 터치 전환 시 **1% 미만** |
 | 최저 프레임 | **30 FPS 이상** |
 | 시설물 가시 거리 | **50m 이상** |
+
+---
+
+## 모바일 성능
+
+### 지형 타일 로딩 속도 향상
+
+| 방법 | 범주 |
+|------|------|
+| gzip/brotli 압축 활성화 | 서버 측 |
+| CDN(Cloudflare 등) 엣지 캐싱 | 서버 측 |
+| HTTP/2 업그레이드 | 서버 측 |
+| `maximumScreenSpaceError` 증가 (저해상도 우선 로드) | Cesium 클라이언트 |
+| `maximumCachedBytes` 증가 (재요청 감소) | Cesium 클라이언트 |
+| `preloadAncestors` 활성화 (부모 타일 미리 로드) | Cesium 클라이언트 |
+
+### 앱 자동 종료 원인 및 진단
+
+오래 켜두면 앱이 종료되는 주요 원인 (우선순위순):
+
+1. **OOM** — Cesium 타일 캐시가 모바일 RAM 한도 초과 → OS 강제 종료 (가장 유력)
+2. **GPU 메모리 누수** — 텍스처·메시 VRAM 누적 → 드라이버 크래시
+3. **발열 쓰로틀링** — 지속 렌더링 → 기기 온도 상승 → 렌더 루프 타임아웃
+4. **Unity 오브젝트 미해제** — Cesium 타일 Destroy 미실행 → 메모리 누수
+
+Android 진단: `adb logcat | grep -E "LowMemoryKiller|OutOfMemoryError"`  
+OOM 확정 시: `maximumCachedBytes` 축소 또는 타일 캐시 주기적 초기화 로직 적용.
 
 ---
 

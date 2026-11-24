@@ -1,0 +1,109 @@
+{
+  "purpose": "Current local inspection reference only; no thesis experiment version is assigned to this snapshot.",
+  "inspection_date": "2026-11-15",
+  "head": "45c57fc3a02a9ae517b92cc764d5787943eb3dc2",
+  "latest_commit": "45c57fc | 2026-05-22T18:14:24+09:00 | 디렉토리 정리",
+  "branch": "main",
+  "working_tree_clean": false,
+  "unity": "6000.4.1f1",
+  "cesium": "1.23.1",
+  "ai_navigation": "2.0.12",
+  "mago_configured_default": "1.16.3",
+  "scene_settings": {
+    "eye_height_m": 3,
+    "building_height_input": "12 (constant height)",
+    "skirt_height_m": 0,
+    "arrival_radius_m": 15,
+    "route_refresh_interval_s": 10
+  },
+  "paper_planned_eye_height_m": 2,
+  "notes": [
+    "HEAD alone does not identify this working copy; there are uncommitted changes and untracked implementation files.",
+    "SHA256 values identify selected local files and do not replace a commit or backup for restoring their contents.",
+    "Actual device build and deployed server versions remain unverified.",
+    "Refresh this snapshot after any changes before using it as an experiment baseline."
+  ],
+  "files": [
+    {
+      "path": "ProjectSettings/ProjectVersion.txt",
+      "sha256": "1378d2e073601f5c7acf18b6f191225922c87c6a591aab460e503fe0b8d80f21"
+    },
+    {
+      "path": "Packages/manifest.json",
+      "sha256": "811ded3f70066bfb092732a418c64effd286b9f1277a7a77e502b324aa05b278"
+    },
+    {
+      "path": "Packages/packages-lock.json",
+      "sha256": "caa3154dc048f0ee8378ce4c4ef84599e2bd9b0e363cfac80ff100cd8c06d96e"
+    },
+    {
+      "path": "Assets/level2.unity",
+      "sha256": "5c48214b1b77a8aa5ebb798e8638e9e1387ca7678a4f057e8e23fce40516ef42"
+    },
+    {
+      "path": "Assets/RoadTools/Runtime/Mago3DTiler/ShpTo3dTile.cs",
+      "sha256": "0de5a45ffeada7deb6da7880f78f5142a132c7174f436fdd6e9fa9369ade28bb"
+    },
+    {
+      "path": "Assets/RoadTools/Runtime/TerrainSource/TerrainSourceSwitcher.cs",
+      "sha256": "7a65c556f7fd6e62c79094c207acf5537ef1f6d36d586465e53fc47fce3e0208"
+    },
+    {
+      "path": "Assets/RoadTools/Runtime/GPS/FirstPersonGPSController.cs",
+      "sha256": "a5d44a11ce939fe9d23f2e83b16c352392d5c7d97b5bb4076b77cf2649286b92"
+    },
+    {
+      "path": "Assets/RoadTools/Runtime/GPS/GPSLocationService.cs",
+      "sha256": "a55e5fd9bdad56071fb8d5c81644e61bf80b0656d2d80dbe8d55dc5653414187"
+    },
+    {
+      "path": "Assets/RoadTools/Runtime/Navigation/NavigationService.cs",
+      "sha256": "8989c41f5287cae9211afacc3ad896b09542c66d6f472b3c31921a87f2cc6336"
+    },
+    {
+      "path": "Assets/RoadTools/Runtime/Navigation/RouteRenderer.cs",
+      "sha256": "90edda430f5cf0b3a47d574300abf0c999b7e79d01dd3d9ec5d4dca6769ae9b9"
+    },
+    {
+      "path": "Tiler_Server/app/config.py",
+      "sha256": "33afe9325ca4ca681ac28ad6c9a76a1a887c7a7b2f1fd1cd22ee7f56fa2ec2b8"
+    },
+    {
+      "path": "Tiler_Server/app/main.py",
+      "sha256": "7ff95b5104a1ece8e46614aa9ddd48f54897a067e217e26f7ddcb831c42079e2"
+    },
+    {
+      "path": "Tiler_Server/app/services/dem_clamp_worker.py",
+      "sha256": "e9162946eef285da504f2c4a75e3028ac2a3a8fc98ae5ad20277936d4e24fc26"
+    },
+    {
+      "path": "Tiler_Server/app/services/tiler.py",
+      "sha256": "136eb90134a14522b6497f78c281471681ffc8624387b8129cca5aaee0d1e50d"
+    },
+    {
+      "path": "Tiler_Server/app/services/jobs.py",
+      "sha256": "3f7b70a2f0cd7475e8a1ef4e468c52a80077fee0ebd8a133c3123ccdbce7c76e"
+    },
+    {
+      "path": "Tiler_Server/app/services/terrain.py",
+      "sha256": "4c6704b94f1678829f7e2f284a8393e7dba2bd80bf5c8b9e6706a7ad6491645c"
+    },
+    {
+      "path": "Tiler_Server/Dockerfile",
+      "sha256": "52ad0a923ab99ad0e0b28ce2ca9b98ab1f3fe2c5892f6bb2e20d1ccdce524a4e"
+    },
+    {
+      "path": "Tiler_Server/docker-compose.yml",
+      "sha256": "c79568a039bac51ef21412a88b4f5ef49c0236130bc9a54c314061f134bffe16"
+    },
+    {
+      "path": "Tiler_Server/vendor/mago-3d-tiler-1.16.3.jar",
+      "sha256": "7315517d3828947308a27233fe0eec2a96bb6b5844bc67d557484ea2ced600b3"
+    }
+  ],
+  "experiment_version_assignment": {
+    "status": "unassigned",
+    "rule": "논문에서 처음 테스트하는 빌드를 A(0.1.0)로 지정한다. 현재 로컬 스냅샷과 자동 연결하지 않는다.",
+    "policy_document": "실험빌드_버전관리.md"
+  }
+}

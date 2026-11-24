@@ -8,16 +8,17 @@ UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", DATA_DIR / "uploads")).resolve()
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", DATA_DIR / "outputs")).resolve()
 
 MAGO_TILER_JAR = Path(
-    os.getenv("MAGO_TILER_JAR", "/opt/mago/mago-3d-tiler-1.15.4.jar")
+    os.getenv("MAGO_TILER_JAR", "/opt/mago/mago-3d-tiler-1.16.3.jar")
 ).resolve()
 
 DEFAULT_INPUT_TYPE = os.getenv("DEFAULT_INPUT_TYPE", "shp")
 DEFAULT_OUTPUT_TYPE = os.getenv("DEFAULT_OUTPUT_TYPE", "b3dm")
 DEFAULT_COORDINATE_CODE = os.getenv("DEFAULT_COORDINATE_CODE", "5186")
 DEFAULT_HEIGHT_COLUMN = os.getenv("DEFAULT_HEIGHT_COLUMN", "height")
-DEFAULT_SKIRT_HEIGHT = os.getenv("DEFAULT_SKIRT_HEIGHT", "10.0")
+DEFAULT_SKIRT_HEIGHT = os.getenv("DEFAULT_SKIRT_HEIGHT", "0.0")
 
 CONVERT_TIMEOUT_SECONDS = int(os.getenv("CONVERT_TIMEOUT_SECONDS", "1800"))
+GDAL_PYTHON = os.getenv("GDAL_PYTHON", "/usr/bin/python3")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
 # JVM 힙 설정 — 미설정 시 GC 반복으로 전처리 속도 저하
@@ -26,6 +27,8 @@ JAVA_XMX = os.getenv("JAVA_XMX", "4g")     # 최대 힙 (서버 가용 메모리
 
 TERRAIN_DIR = Path(os.getenv("TERRAIN_DIR", str(DATA_DIR / "terrain_tiles"))).resolve()
 DEFAULT_TERRAIN_MAX_ZOOM = int(os.getenv("DEFAULT_TERRAIN_MAX_ZOOM", "12"))
+TERRAIN_RESAMPLING_METHOD = os.getenv("TERRAIN_RESAMPLING_METHOD", "bilinear")
+TERRAIN_MESH_QFACTOR = os.getenv("TERRAIN_MESH_QFACTOR", "0.01")
 
 ALLOWED_EXTENSIONS = {
     ".shp",

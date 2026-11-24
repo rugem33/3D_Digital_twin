@@ -9,7 +9,13 @@ from typing import Any
 
 from app import config
 from app.services.archive import zip_directory
-from app.services.tiler import TilerOptions, build_mago_command, find_tileset
+from app.services.tiler import (
+    TilerOptions,
+    build_mago_command,
+    find_tileset,
+    prepare_clamp_terrain,
+    prepared_input_dir,
+)
 
 
 PRE_RE = re.compile(r"\[Pre\].*?\[(\d+)/(\d+)\]")
@@ -21,7 +27,8 @@ def start_conversion_job(
     input_dir: Path,
     output_dir: Path,
     options: TilerOptions,
-    terrain_path: Path | None,
+    clamp_dem_path: Path | None,
+    mago_terrain_path: Path | None,
     attributes: dict[str, Any],
     public_base_url: str = "",
 ) -> None:
@@ -43,7 +50,10 @@ def start_conversion_job(
     )
     thread = threading.Thread(
         target=_run_conversion_job,
-        args=(job_id, input_dir, output_dir, options, terrain_path, attributes, public_base_url),
+        args=(
+            job_id, input_dir, output_dir, options,
+            clamp_dem_path, mago_terrain_path, attributes, public_base_url,
+        ),
         daemon=True,
     )
     thread.start()
@@ -77,7 +87,8 @@ def _run_conversion_job(
     input_dir: Path,
     output_dir: Path,
     options: TilerOptions,
-    terrain_path: Path | None,
+    clamp_dem_path: Path | None,
+    mago_terrain_path: Path | None,
     attributes: dict[str, Any],
     public_base_url: str = "",
 ) -> None:
@@ -88,6 +99,16 @@ def _run_conversion_job(
         if not config.MAGO_TILER_JAR.exists():
             raise FileNotFoundError(f"mago3d tiler jar not found: {config.MAGO_TILER_JAR}")
 
+        if clamp_dem_path is not None:
+            _write_status(job_id, output_dir, {
+                "stage": "preparing_dem", "progress": 0,
+                "progressText": "Clipping SHP to DEM coverage and preparing ground heights",
+            }, merge=True)
+        prepared_dem_path = prepare_clamp_terrain(
+            input_dir, output_dir, options, clamp_dem_path,
+        )
+        input_dir = prepared_input_dir(input_dir, prepared_dem_path)
+        terrain_path = mago_terrain_path or prepared_dem_path
         command = build_mago_command(input_dir, output_dir, options, terrain_path)
         _write_status(
             job_id,

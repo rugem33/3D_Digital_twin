@@ -67,7 +67,7 @@ namespace Rugem.RoadTools
         [SerializeField] private bool _applyTerrainLoadingLimits = true;
 
         [Tooltip("Higher values request fewer terrain tiles. For quantized-mesh, this is effectively divided by 8.")]
-        [SerializeField] [Range(16f, 128f)] private float _terrainMaximumScreenSpaceError = 32f;
+        [SerializeField] [Range(8f, 128f)] private float _terrainMaximumScreenSpaceError = 16f;
 
         [Tooltip("Maximum terrain tile requests processed at the same time.")]
         [SerializeField] [Range(1, 20)] private int _terrainMaximumSimultaneousTileLoads = 6;
@@ -91,6 +91,21 @@ namespace Rugem.RoadTools
         public DemUploadStatus DemStatus => _demStatus;
         public string DemStatusMessage => _demStatusMessage;
         public string ResolvedTerrainUrl => ResolveTerrainUrl(_mode);
+        public string ActiveTerrainJobId
+        {
+            get
+            {
+                if ((_mode != TerrainSourceMode.DemServer && _mode != TerrainSourceMode.CustomUrl) ||
+                    string.IsNullOrWhiteSpace(_demJobId))
+                    return "";
+
+                string jobId = _demJobId.Trim();
+                string marker = $"/terrain/{jobId}/layer.json";
+                return ResolvedTerrainUrl.IndexOf(marker, StringComparison.OrdinalIgnoreCase) >= 0
+                    ? jobId
+                    : "";
+            }
+        }
 
 #if UNITY_EDITOR
         private bool _editorUploadInProgress;

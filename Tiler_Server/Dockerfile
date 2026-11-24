@@ -4,12 +4,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     APP_BASE_DIR=/app \
     DATA_DIR=/data \
-    MAGO_TILER_JAR=/opt/mago/mago-3d-tiler-1.15.4.jar
+    MAGO_TILER_JAR=/opt/mago/mago-3d-tiler-1.16.3.jar
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         openjdk-21-jre-headless \
         gdal-bin \
+        python3-gdal \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -26,7 +27,7 @@ COPY tools ./tools
 COPY scripts ./scripts
 
 RUN mkdir -p /data/uploads /data/outputs /data/terrain_tiles /opt/mago
-COPY vendor/mago-3d-tiler-1.15.4.jar /opt/mago/mago-3d-tiler-1.15.4.jar
+COPY vendor/mago-3d-tiler-1.16.3.jar /opt/mago/mago-3d-tiler-1.16.3.jar
 
 EXPOSE 8000
 

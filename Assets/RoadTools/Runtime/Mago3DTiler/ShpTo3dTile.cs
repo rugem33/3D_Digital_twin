@@ -72,8 +72,10 @@ namespace Rugem.RoadTools
         [SerializeField] private string _shpZipPath;
 
         [Header("DEM 파일 (선택)")]
-        [Tooltip(".tif GeoTIFF — 지형 높이 보정. 비워두면 전송하지 않음")]
+        [Tooltip("DEM GeoTIFF — 건물 위치별 지면 높이 적용. 비워두면 DEM 클램프 없이 변환")]
         [SerializeField] private string _demTifPath;
+        [Tooltip("현재 표시 중인 DEM terrain job. 지정하면 DEM 파일 대신 동일한 quantized-mesh를 건물 클램핑에 사용")]
+        [SerializeField] private TerrainSourceSwitcher _terrainSource;
 
         [Header("변환 옵션")]
         [SerializeField] private OutputType _outputType = OutputType.b3dm;
@@ -82,8 +84,8 @@ namespace Rugem.RoadTools
         [SerializeField] private int _coordinateSystem = 5186;
         [Tooltip("높이값으로 사용할 DBF 속성 컬럼명 또는 모든 객체에 적용할 float 높이값")]
         [SerializeField] private string _heightColumn = "height";
-        [Tooltip("높이 스케일 배율")]
-        [SerializeField] private float _scaleHeight = 10.0f;
+        [Tooltip("건물 바닥의 지중 여유 높이(m). Mago -sh 옵션")]
+        [SerializeField] private float _scaleHeight = 0.0f;
         [Tooltip("추가 속성값 — JSON 객체 문자열 (예: {\"project\":\"demo\"})")]
         [SerializeField] private string _attributesJson = "{}";
 
@@ -209,18 +211,36 @@ namespace Rugem.RoadTools
                 form.Add(new StringContent(_scaleHeight.ToString("F4")),             "scaleHeight");
                 form.Add(new StringContent(_attributesJson),                         "attributes");
 
-                // DEM 파일 (선택)
-                string demPath = ResolvePath(_demTifPath);
-                if (!string.IsNullOrEmpty(demPath) && File.Exists(demPath))
-                {
-                    FileStream demStream;
-                    try   { demStream = new FileStream(demPath, FileMode.Open, FileAccess.Read, FileShare.Read); }
-                    catch (Exception e) { Fail($"DEM 파일 열기 실패: {e.Message}"); return; }
+                TerrainSourceSwitcher terrainSource = _terrainSource != null
+                    ? _terrainSource
+                    : GetComponent<TerrainSourceSwitcher>();
+                string terrainJobId = terrainSource != null ? terrainSource.ActiveTerrainJobId : "";
 
-                    var demContent = new StreamContent(demStream);
-                    demContent.Headers.ContentType =
-                        new System.Net.Http.Headers.MediaTypeHeaderValue("image/tiff");
-                    form.Add(demContent, "demFile", Path.GetFileName(demPath));
+                // 표시 중인 terrain job을 우선 사용하고, 없을 때만 DEM 파일을 업로드한다.
+                if (!string.IsNullOrEmpty(terrainJobId))
+                {
+                    form.Add(new StringContent(terrainJobId), "terrainJobId");
+                    Debug.Log($"[ShpTo3dTile] 동일 지형 메시 사용: terrainJobId={terrainJobId}");
+                }
+                else
+                {
+                    string demPath = ResolvePath(_demTifPath);
+                    if (!string.IsNullOrEmpty(demPath) && !File.Exists(demPath))
+                    {
+                        Fail($"DEM 파일을 찾을 수 없습니다: '{demPath}'");
+                        return;
+                    }
+                    if (!string.IsNullOrEmpty(demPath))
+                    {
+                        FileStream demStream;
+                        try   { demStream = new FileStream(demPath, FileMode.Open, FileAccess.Read, FileShare.Read); }
+                        catch (Exception e) { Fail($"DEM 파일 열기 실패: {e.Message}"); return; }
+
+                        var demContent = new StreamContent(demStream);
+                        demContent.Headers.ContentType =
+                            new System.Net.Http.Headers.MediaTypeHeaderValue("image/tiff");
+                        form.Add(demContent, "demFile", Path.GetFileName(demPath));
+                    }
                 }
 
                 // 3. POST /api/convert

@@ -21,6 +21,7 @@ from app.services.tiler import TilerOptions, run_mago_tiler
 from app.services.terrain import (
     read_terrain_log,
     read_terrain_status,
+    resolve_terrain_job_assets,
     serve_layer_json,
     get_tile_bytes,
     start_terrain_job,
@@ -90,6 +91,7 @@ def create_app() -> Flask:
                 job_output_dir,
                 conversion["options"],
                 conversion["terrain_path"],
+                conversion["mago_terrain_path"],
                 conversion["attributes"],
                 request.host_url.rstrip("/"),
             )
@@ -126,7 +128,13 @@ def create_app() -> Flask:
             options = conversion["options"]
             attributes = conversion["attributes"]
 
-            result = run_mago_tiler(job_upload_dir, job_output_dir, options, terrain_path)
+            result = run_mago_tiler(
+                job_upload_dir,
+                job_output_dir,
+                options,
+                terrain_path,
+                conversion["mago_terrain_path"],
+            )
             stdout_path = job_output_dir / "mago_stdout.log"
             stderr_path = job_output_dir / "mago_stderr.log"
             stdout_path.write_text(result.stdout, encoding="utf-8")
@@ -296,6 +304,12 @@ def prepare_conversion_request(job_id: str, job_upload_dir: Path, job_output_dir
     save_uploads(upload_files, job_upload_dir)
     shp_path = find_shapefile(job_upload_dir)
     terrain_path = find_terrain_file(job_upload_dir)
+    terrain_job_id = form_value("terrainJobId", "terrain_job_id", default="").strip().lower()
+    mago_terrain_path = None
+    if terrain_job_id and terrain_path is not None:
+        raise ValueError("Upload demFile or provide terrainJobId, not both")
+    if terrain_job_id:
+        terrain_path, mago_terrain_path = resolve_terrain_job_assets(terrain_job_id)
 
     attributes = read_attributes(
         request.form.get("attributes"),
@@ -331,7 +345,13 @@ def prepare_conversion_request(job_id: str, job_upload_dir: Path, job_output_dir
             {
                 "job_id": job_id,
                 "shapefile": str(shp_path.relative_to(job_upload_dir)),
-                "terrain_tif": str(terrain_path.relative_to(job_upload_dir)) if terrain_path else None,
+                "terrain_tif": (
+                    str(terrain_path.relative_to(job_upload_dir))
+                    if terrain_path is not None and terrain_path.is_relative_to(job_upload_dir)
+                    else None
+                ),
+                "terrain_job_id": terrain_job_id or None,
+                "mago_terrain": str(mago_terrain_path) if mago_terrain_path else None,
                 "attributes": attributes,
                 "constant_height": constant_height,
                 "tiler_options": options.__dict__,
@@ -345,6 +365,7 @@ def prepare_conversion_request(job_id: str, job_upload_dir: Path, job_output_dir
     return {
         "shp_path": shp_path,
         "terrain_path": terrain_path,
+        "mago_terrain_path": mago_terrain_path,
         "attributes": attributes,
         "options": options,
     }

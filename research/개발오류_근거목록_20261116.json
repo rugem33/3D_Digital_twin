@@ -1,0 +1,386 @@
+{
+  "record_date": "2026-11-16",
+  "note": "Record date is not an execution date; phase markers do not prove exit code or full artifact integrity.",
+  "counts": {
+    "job_count": 12,
+    "invalid_polygon_warning_occurrences": 36,
+    "unique_invalid_polygon_features": [
+      "AL_D010_30_20260309.144715",
+      "AL_D010_30_20260309.161145",
+      "AL_D010_30_20260309.47737"
+    ],
+    "process_summary_jobs": 1,
+    "post_end_jobs_without_summary": 6,
+    "completion_unconfirmed_jobs": 5
+  },
+  "jobs": [
+    {
+      "job_id": "0675f8c81c2743eb97e2007f5c187a69",
+      "relative_path": "Tiler_Server/data/outputs/0675f8c81c2743eb97e2007f5c187a69/mago_stdout.log",
+      "sha256": "499527f143956253a93a3d7ea9edc4f53f39fe5eb9eb5fbe4c00ae44d8aac122",
+      "mago_version": "1.15.4",
+      "invalid_polygon_warnings": [
+        {
+          "line": 31,
+          "message": "[WARN] AL_D010_30_20260309.47737 Is Invalid Polygon."
+        },
+        {
+          "line": 32,
+          "message": "[WARN] AL_D010_30_20260309.144715 Is Invalid Polygon."
+        },
+        {
+          "line": 33,
+          "message": "[WARN] AL_D010_30_20260309.161145 Is Invalid Polygon."
+        }
+      ],
+      "feature_ids": [
+        "AL_D010_30_20260309.47737",
+        "AL_D010_30_20260309.144715",
+        "AL_D010_30_20260309.161145"
+      ],
+      "phase": "post_end_present",
+      "stderr_bytes": 0,
+      "status_file_exists": false,
+      "error_file_exists": false,
+      "summary_excerpt": null
+    },
+    {
+      "job_id": "0deca31ecd6c44cbaa7782eb7b055bc7",
+      "relative_path": "Tiler_Server/data/outputs/0deca31ecd6c44cbaa7782eb7b055bc7/mago_stdout.log",
+      "sha256": "ef578ec075769f225bb71c1b8013db5ba031569ed24f6e35bb9f68eb60b4122c",
+      "mago_version": "1.15.4",
+      "invalid_polygon_warnings": [
+        {
+          "line": 31,
+          "message": "[WARN] AL_D010_30_20260309.47737 Is Invalid Polygon."
+        },
+        {
+          "line": 32,
+          "message": "[WARN] AL_D010_30_20260309.144715 Is Invalid Polygon."
+        },
+        {
+          "line": 33,
+          "message": "[WARN] AL_D010_30_20260309.161145 Is Invalid Polygon."
+        }
+      ],
+      "feature_ids": [
+        "AL_D010_30_20260309.47737",
+        "AL_D010_30_20260309.144715",
+        "AL_D010_30_20260309.161145"
+      ],
+      "phase": "summary_present",
+      "stderr_bytes": 0,
+      "status_file_exists": false,
+      "error_file_exists": false,
+      "summary_excerpt": "[Process Summary]\nTotal tile contents count : 1956\nTotal tileset.json File Size : 366KB\nTotal process time : 20m 52s 731ms sec\n----------------------------------------"
+    },
+    {
+      "job_id": "1155565a7cba4689925fffa785724026",
+      "relative_path": "Tiler_Server/data/outputs/1155565a7cba4689925fffa785724026/mago_stdout.log",
+      "sha256": "0173fbe01a10f5a46ede0b9e1a0cfc6b4c6c7902deae03d5520c9813e36d5c68",
+      "mago_version": "1.15.4",
+      "invalid_polygon_warnings": [
+        {
+          "line": 31,
+          "message": "[WARN] AL_D010_30_20260309.47737 Is Invalid Polygon."
+        },
+        {
+          "line": 32,
+          "message": "[WARN] AL_D010_30_20260309.144715 Is Invalid Polygon."
+        },
+        {
+          "line": 33,
+          "message": "[WARN] AL_D010_30_20260309.161145 Is Invalid Polygon."
+        }
+      ],
+      "feature_ids": [
+        "AL_D010_30_20260309.47737",
+        "AL_D010_30_20260309.144715",
+        "AL_D010_30_20260309.161145"
+      ],
+      "phase": "post_end_present",
+      "stderr_bytes": 0,
+      "status_file_exists": false,
+      "error_file_exists": false,
+      "summary_excerpt": null
+    },
+    {
+      "job_id": "169a54d65055487bb396e979f2954264",
+      "relative_path": "Tiler_Server/data/outputs/169a54d65055487bb396e979f2954264/mago_stdout.log",
+      "sha256": "2f67481cd8752a82bd1b6a436560e702ccb1bdf00305b7ea0f374f274c4ea8bf",
+      "mago_version": "1.15.4",
+      "invalid_polygon_warnings": [
+        {
+          "line": 31,
+          "message": "[WARN] AL_D010_30_20260309.47737 Is Invalid Polygon."
+        },
+        {
+          "line": 32,
+          "message": "[WARN] AL_D010_30_20260309.144715 Is Invalid Polygon."
+        },
+        {
+          "line": 33,
+          "message": "[WARN] AL_D010_30_20260309.161145 Is Invalid Polygon."
+        }
+      ],
+      "feature_ids": [
+        "AL_D010_30_20260309.47737",
+        "AL_D010_30_20260309.144715",
+        "AL_D010_30_20260309.161145"
+      ],
+      "phase": "post_end_present",
+      "stderr_bytes": 0,
+      "status_file_exists": false,
+      "error_file_exists": false,
+      "summary_excerpt": null
+    },
+    {
+      "job_id": "354a7b2370f5445b82389127bce327c7",
+      "relative_path": "Tiler_Server/data/outputs/354a7b2370f5445b82389127bce327c7/mago_stdout.log",
+      "sha256": "86a367b7ab140ead58144ae7d2c65f77c01af2655191ba7725a7435ea6f9cf89",
+      "mago_version": "1.15.4",
+      "invalid_polygon_warnings": [
+        {
+          "line": 31,
+          "message": "[WARN] AL_D010_30_20260309.47737 Is Invalid Polygon."
+        },
+        {
+          "line": 32,
+          "message": "[WARN] AL_D010_30_20260309.144715 Is Invalid Polygon."
+        },
+        {
+          "line": 33,
+          "message": "[WARN] AL_D010_30_20260309.161145 Is Invalid Polygon."
+        }
+      ],
+      "feature_ids": [
+        "AL_D010_30_20260309.47737",
+        "AL_D010_30_20260309.144715",
+        "AL_D010_30_20260309.161145"
+      ],
+      "phase": "post_end_present",
+      "stderr_bytes": 0,
+      "status_file_exists": false,
+      "error_file_exists": false,
+      "summary_excerpt": null
+    },
+    {
+      "job_id": "5dda60bb60f1418496d8e22c35e9f277",
+      "relative_path": "Tiler_Server/data/outputs/5dda60bb60f1418496d8e22c35e9f277/mago_stdout.log",
+      "sha256": "5bba493beb8b5231fa5c36181f4802cb40c6ffb325ac3c39219985944207f0ef",
+      "mago_version": "1.15.4",
+      "invalid_polygon_warnings": [
+        {
+          "line": 29,
+          "message": "[WARN] AL_D010_30_20260309.47737 Is Invalid Polygon."
+        },
+        {
+          "line": 30,
+          "message": "[WARN] AL_D010_30_20260309.144715 Is Invalid Polygon."
+        },
+        {
+          "line": 31,
+          "message": "[WARN] AL_D010_30_20260309.161145 Is Invalid Polygon."
+        }
+      ],
+      "feature_ids": [
+        "AL_D010_30_20260309.47737",
+        "AL_D010_30_20260309.144715",
+        "AL_D010_30_20260309.161145"
+      ],
+      "phase": "completion_unconfirmed",
+      "stderr_bytes": 0,
+      "status_file_exists": false,
+      "error_file_exists": false,
+      "summary_excerpt": null
+    },
+    {
+      "job_id": "63a45d0a846242afbc43f54cfa46ca50",
+      "relative_path": "Tiler_Server/data/outputs/63a45d0a846242afbc43f54cfa46ca50/mago_stdout.log",
+      "sha256": "17a585c3f90a021b89773ff94e5cf86016990181b7d43a357c6f8267638b0782",
+      "mago_version": "1.15.4",
+      "invalid_polygon_warnings": [
+        {
+          "line": 31,
+          "message": "[WARN] AL_D010_30_20260309.47737 Is Invalid Polygon."
+        },
+        {
+          "line": 32,
+          "message": "[WARN] AL_D010_30_20260309.144715 Is Invalid Polygon."
+        },
+        {
+          "line": 33,
+          "message": "[WARN] AL_D010_30_20260309.161145 Is Invalid Polygon."
+        }
+      ],
+      "feature_ids": [
+        "AL_D010_30_20260309.47737",
+        "AL_D010_30_20260309.144715",
+        "AL_D010_30_20260309.161145"
+      ],
+      "phase": "completion_unconfirmed",
+      "stderr_bytes": 0,
+      "status_file_exists": false,
+      "error_file_exists": false,
+      "summary_excerpt": null
+    },
+    {
+      "job_id": "6c6623036f434f51aef6c74bbb661af0",
+      "relative_path": "Tiler_Server/data/outputs/6c6623036f434f51aef6c74bbb661af0/mago_stdout.log",
+      "sha256": "bc1e827750c7f6501de3e1216262a918c25eabf21e3b03f627708c07fc2f607d",
+      "mago_version": "1.15.4",
+      "invalid_polygon_warnings": [
+        {
+          "line": 29,
+          "message": "[WARN] AL_D010_30_20260309.47737 Is Invalid Polygon."
+        },
+        {
+          "line": 30,
+          "message": "[WARN] AL_D010_30_20260309.144715 Is Invalid Polygon."
+        },
+        {
+          "line": 31,
+          "message": "[WARN] AL_D010_30_20260309.161145 Is Invalid Polygon."
+        }
+      ],
+      "feature_ids": [
+        "AL_D010_30_20260309.47737",
+        "AL_D010_30_20260309.144715",
+        "AL_D010_30_20260309.161145"
+      ],
+      "phase": "completion_unconfirmed",
+      "stderr_bytes": 0,
+      "status_file_exists": false,
+      "error_file_exists": false,
+      "summary_excerpt": null
+    },
+    {
+      "job_id": "7f560a996a1b4fa08ed739991910da60",
+      "relative_path": "Tiler_Server/data/outputs/7f560a996a1b4fa08ed739991910da60/mago_stdout.log",
+      "sha256": "88d00e4a19ab63a645de8182de8f5f3c8a11186978e30b075938f12ef2514b50",
+      "mago_version": "1.15.4",
+      "invalid_polygon_warnings": [
+        {
+          "line": 31,
+          "message": "[WARN] AL_D010_30_20260309.47737 Is Invalid Polygon."
+        },
+        {
+          "line": 32,
+          "message": "[WARN] AL_D010_30_20260309.144715 Is Invalid Polygon."
+        },
+        {
+          "line": 33,
+          "message": "[WARN] AL_D010_30_20260309.161145 Is Invalid Polygon."
+        }
+      ],
+      "feature_ids": [
+        "AL_D010_30_20260309.47737",
+        "AL_D010_30_20260309.144715",
+        "AL_D010_30_20260309.161145"
+      ],
+      "phase": "post_end_present",
+      "stderr_bytes": 0,
+      "status_file_exists": false,
+      "error_file_exists": false,
+      "summary_excerpt": null
+    },
+    {
+      "job_id": "afad4c74ab4c4abcaddcb2c1db71c4f1",
+      "relative_path": "Tiler_Server/data/outputs/afad4c74ab4c4abcaddcb2c1db71c4f1/mago_stdout.log",
+      "sha256": "30bd7936de1778042db7e0725397ec1fb23a94b9dd88044aa1f7dc261b752d31",
+      "mago_version": "1.15.4",
+      "invalid_polygon_warnings": [
+        {
+          "line": 31,
+          "message": "[WARN] AL_D010_30_20260309.47737 Is Invalid Polygon."
+        },
+        {
+          "line": 32,
+          "message": "[WARN] AL_D010_30_20260309.144715 Is Invalid Polygon."
+        },
+        {
+          "line": 33,
+          "message": "[WARN] AL_D010_30_20260309.161145 Is Invalid Polygon."
+        }
+      ],
+      "feature_ids": [
+        "AL_D010_30_20260309.47737",
+        "AL_D010_30_20260309.144715",
+        "AL_D010_30_20260309.161145"
+      ],
+      "phase": "completion_unconfirmed",
+      "stderr_bytes": 0,
+      "status_file_exists": false,
+      "error_file_exists": false,
+      "summary_excerpt": null
+    },
+    {
+      "job_id": "cc139425935c4c8f813f863e2c672a62",
+      "relative_path": "Tiler_Server/data/outputs/cc139425935c4c8f813f863e2c672a62/mago_stdout.log",
+      "sha256": "d929408c91f806b4d3a18dbff32f886573025114801b0c74aba7e7cba4749097",
+      "mago_version": "1.15.4",
+      "invalid_polygon_warnings": [
+        {
+          "line": 29,
+          "message": "[WARN] AL_D010_30_20260309.47737 Is Invalid Polygon."
+        },
+        {
+          "line": 30,
+          "message": "[WARN] AL_D010_30_20260309.144715 Is Invalid Polygon."
+        },
+        {
+          "line": 31,
+          "message": "[WARN] AL_D010_30_20260309.161145 Is Invalid Polygon."
+        }
+      ],
+      "feature_ids": [
+        "AL_D010_30_20260309.47737",
+        "AL_D010_30_20260309.144715",
+        "AL_D010_30_20260309.161145"
+      ],
+      "phase": "completion_unconfirmed",
+      "stderr_bytes": 0,
+      "status_file_exists": false,
+      "error_file_exists": false,
+      "summary_excerpt": null
+    },
+    {
+      "job_id": "e94cc76ca55f4f71bc6a8a9fa2ff17eb",
+      "relative_path": "Tiler_Server/data/outputs/e94cc76ca55f4f71bc6a8a9fa2ff17eb/mago_stdout.log",
+      "sha256": "7acbffb1433c8ec5fa9975187f852f623c08e3db8369672b985c1801e2816294",
+      "mago_version": "1.15.4",
+      "invalid_polygon_warnings": [
+        {
+          "line": 31,
+          "message": "[WARN] AL_D010_30_20260309.47737 Is Invalid Polygon."
+        },
+        {
+          "line": 32,
+          "message": "[WARN] AL_D010_30_20260309.144715 Is Invalid Polygon."
+        },
+        {
+          "line": 33,
+          "message": "[WARN] AL_D010_30_20260309.161145 Is Invalid Polygon."
+        }
+      ],
+      "feature_ids": [
+        "AL_D010_30_20260309.47737",
+        "AL_D010_30_20260309.144715",
+        "AL_D010_30_20260309.161145"
+      ],
+      "phase": "post_end_present",
+      "stderr_bytes": 0,
+      "status_file_exists": false,
+      "error_file_exists": false,
+      "summary_excerpt": null
+    }
+  ],
+  "current_normal_function_confirmation": {
+    "source": "User statement in this conversation on 2026-11-16",
+    "statement": "정상적으로 동작은 다 확인함",
+    "evidence_type": "developer_report",
+    "measured_success_rate": null,
+    "measured_latency": null,
+    "experiment_version_mapping": "unassigned; do not infer A/0.1.0 from current checkout"
+  }
+}
